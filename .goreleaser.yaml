@@ -1,0 +1,125 @@
+version: 2
+
+project_name: so-aws-lab
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+    # Refresh dependency notices so a release can never ship a stale set. The
+    # script fails the build if any linked module has no license file.
+    - sh scripts/gen-third-party.sh
+
+builds:
+  - id: so-aws-lab
+    main: ./cmd/so-aws-lab
+    binary: so-aws-lab
+    # Pure Go — no cgo anywhere in the dep tree, so every target cross-compiles
+    # from the release runner with no C toolchain.
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    # Deliberately no version in the name: install.sh builds this filename from
+    # (os, arch) alone. GoReleaser strips the leading "v" from .Version, which
+    # is a classic source of 404s in install scripts — this sidesteps it.
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # LICENSE and THIRD_PARTY_NOTICES.md are not optional extras: MIT and BSD
+    # both require their notices to accompany redistributed copies, and the
+    # binary in this archive statically links that dependency code.
+    files:
+      - README.md
+      - LICENSE
+      - THIRD_PARTY_NOTICES.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+release:
+  draft: false
+  prerelease: auto
+  footer: |
+    ## Install
+
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/specterops/so-aws-lab/main/install.sh | sh
+    ```
+
+    Requires `terraform` and the `aws` CLI on your `$PATH`.
+
+# Homebrew tap. Each tagged release commits Casks/so-aws-lab.rb to
+# github.com/specterops/homebrew-labs, which users install from as:
+#
+#   brew install specterops/labs/so-aws-lab
+#
+# Homebrew strips the mandatory "homebrew-" prefix, so the tap repo name must
+# stay homebrew-labs for that command to resolve. The tap is a collection:
+# future lab tooling drops in as another cask, not another tap repo.
+#
+# This is a cask, not a formula: GoReleaser deprecated `brews` because formulae
+# that just drop a pre-built binary were always a hack. The tradeoff is that
+# Homebrew casks are macOS-only — Linux users install via install.sh, which
+# covers linux/amd64 and linux/arm64.
+#
+# Requires a HOMEBREW_TAP_TOKEN secret: a PAT with `contents: write` on the tap
+# repo. The workflow's default GITHUB_TOKEN is scoped to this repository only
+# and cannot push to another one.
+homebrew_casks:
+  - name: so-aws-lab
+    repository:
+      owner: specterops
+      name: homebrew-labs
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/specterops/so-aws-lab"
+    description: "Deploy intentionally vulnerable AWS labs into your own sandbox account"
+    binaries:
+      - so-aws-lab
+    # The reason Homebrew is the preferred channel: it installs the runtime
+    # dependencies, where install.sh can only warn that they're missing.
+    dependencies:
+      - formula: terraform
+      - formula: awscli
+    # The release binaries are not signed or notarized, so Gatekeeper quarantines
+    # anything Homebrew stages and macOS reports it as "damaged". Strip the
+    # attribute on install. Remove this once the binaries are properly signed.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/so-aws-lab"]
+          end

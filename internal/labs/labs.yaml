@@ -1,0 +1,266 @@
+# Lab catalog. The `so-aws-lab` TUI reads this to render the toggle list.
+# `slug` matches the Terraform `enable_<slug>` variable.
+
+labs:
+  - slug: createpolicyversion
+    title: IAM CreatePolicyVersion
+    category: IAM
+    technique: Swap default version of a managed policy attached to the entry role
+    has_victim: false
+    services: [iam]
+    cost: "free"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: assumerole
+    title: IAM AssumeRole
+    category: IAM
+    technique: Discover that the lab target trusts the entry role directly
+    has_victim: false
+    services: [iam, sts]
+    cost: "free"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: putuserpolicy
+    title: IAM PutUserPolicy
+    category: IAM
+    technique: Put an inline policy on a victim user, mint keys, assume target as victim
+    has_victim: true
+    services: [iam]
+    cost: "free"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: attachrolepolicy
+    title: IAM AttachRolePolicy
+    category: IAM
+    technique: Attach a sleeper managed policy to your own entry role
+    has_victim: false
+    services: [iam]
+    cost: "free"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: createcredentials
+    title: IAM CreateAccessKey
+    category: IAM
+    technique: Mint keys for the lab's victim user, assume target as victim
+    has_victim: true
+    services: [iam]
+    cost: "free"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: updateassumerolepolicy
+    title: IAM UpdateAssumeRolePolicy
+    category: IAM
+    technique: Rewrite the target role's trust policy to allow your entry role
+    has_victim: false
+    services: [iam]
+    cost: "free"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: ec2runinstances
+    title: EC2 RunInstances + PassRole
+    category: EC2
+    technique: Launch an EC2 with a privileged instance profile, steal IMDS creds
+    has_victim: false
+    services: [ec2, iam]
+    cost: "~$0.01 per run (t3.micro/hr)"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: ec2modifyuserdata
+    title: EC2 ModifyInstanceAttribute (userdata)
+    category: EC2
+    technique: Rewrite userdata on a privileged EC2 target, restart, exfil creds
+    has_victim: false
+    services: [ec2]
+    cost: "~$0.25/day while enabled (t3.micro)"
+    daily_usd: 0.25
+    accounts: [dev]
+
+  - slug: lambdacreatefunction
+    title: Lambda CreateFunction + PassRole
+    category: Lambda
+    technique: Create a Lambda with a privileged service role, invoke it, exfil
+    has_victim: false
+    services: [lambda, iam]
+    cost: "free"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: lambdaupdatefunctioncode
+    title: Lambda UpdateFunctionCode
+    category: Lambda
+    technique: Overwrite an existing privileged Lambda's code, invoke, exfil
+    has_victim: false
+    services: [lambda]
+    cost: "free"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: lambdaupdatelayer
+    title: Lambda UpdateLayer
+    category: Lambda
+    technique: Publish a malicious layer, swap it into the target function, invoke
+    has_victim: false
+    services: [lambda]
+    cost: "free"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: cloudformationcreatestack
+    title: CloudFormation CreateStack + PassRole
+    category: CloudFormation
+    technique: Submit a stack using the lab's CFN service role to leak the flag
+    has_victim: false
+    services: [cloudformation, iam]
+    cost: "free"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: cloudformationcreatechangeset
+    title: CloudFormation CreateChangeSet
+    category: CloudFormation
+    technique: Change-set the pre-deployed stack via the privileged service role
+    has_victim: false
+    services: [cloudformation, iam]
+    cost: "free"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: ssmgetparameter
+    title: SSM GetParameter (creds)
+    category: SSM
+    technique: Read a SecureString parameter containing victim creds, assume target
+    has_victim: true
+    services: [ssm, iam]
+    cost: "free"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: ssmsendcommand
+    title: SSM SendCommand
+    category: SSM
+    technique: Run a shell command on the privileged EC2 target to exfil creds
+    has_victim: false
+    services: [ssm, ec2]
+    cost: "~$0.25/day while enabled (t3.micro)"
+    daily_usd: 0.25
+    accounts: [dev]
+
+  - slug: s3getobject
+    title: S3 GetObject (creds)
+    category: S3
+    technique: Read a creds object the lab bucket exposes to your entry role
+    has_victim: true
+    services: [s3, iam]
+    cost: "free"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: s3putbucketpolicy
+    title: S3 PutBucketPolicy
+    category: S3
+    technique: Rewrite the bucket policy to grant yourself read on the creds object
+    has_victim: true
+    services: [s3]
+    cost: "free"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: kmsdecrypt
+    title: KMS Decrypt
+    category: KMS
+    technique: Decrypt a KMS-protected ciphertext, extract victim creds
+    has_victim: true
+    services: [kms, ssm]
+    cost: "~$1/mo per CMK while enabled"
+    daily_usd: 0.033
+    accounts: [dev]
+
+  - slug: kmscreategrant
+    title: KMS CreateGrant
+    category: KMS
+    technique: Self-authorize KMS Decrypt via a grant, decrypt creds
+    has_victim: true
+    services: [kms, ssm]
+    cost: "~$1/mo per CMK while enabled"
+    daily_usd: 0.033
+    accounts: [dev]
+
+  - slug: eksaccessentry
+    title: EKS AssociateAccessPolicy
+    category: EKS
+    technique: Attach a stronger cluster-access policy to your entry role
+    has_victim: true
+    services: [eks, iam]
+    cost: "~$4.40/day (shared EKS control plane + 2x t3.medium)"
+    daily_usd: 4.4
+    shared_resource: shared_eks
+    accounts: [dev]
+
+  - slug: ekspodidentityassociation
+    title: EKS CreatePodIdentityAssociation + PassRole
+    category: EKS
+    technique: Bind a privileged pod identity role to a pod's service account
+    has_victim: false
+    services: [eks, iam]
+    cost: "~$4.40/day (shared EKS control plane + 2x t3.medium)"
+    daily_usd: 4.4
+    shared_resource: shared_eks
+    accounts: [dev]
+
+  - slug: conditionresourcetag
+    title: "Condition — aws:ResourceTag"
+    category: Conditions
+    technique: Find the Lambda tagged Lab=conditionresourcetag among decoys, update its code to exfil exec-role creds
+    has_victim: false
+    services: [lambda, iam]
+    cost: "free"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: conditionprincipaltag
+    title: "Condition — aws:PrincipalTag (iam:TagUser)"
+    category: Conditions
+    technique: Self-tag the IAM user with access=admin via iam:TagUser to satisfy the target role's trust condition
+    has_victim: false
+    services: [iam, sts]
+    cost: "free"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: conditionexternalid
+    title: "Condition — sts:ExternalId"
+    category: Conditions
+    technique: Read the external-id from SSM, pass it via --external-id when assuming the target role
+    has_victim: false
+    services: [iam, sts, ssm]
+    cost: "free"
+    daily_usd: 0.0
+    accounts: [dev]
+
+  - slug: kmsencryptioncontext
+    title: "Condition — kms:ViaService + EncryptionContext"
+    category: Conditions
+    technique: Update a pre-deployed Lambda to call kms:Decrypt with the exact EncryptionContext the key policy requires
+    has_victim: false
+    services: [kms, lambda, iam]
+    cost: "~$1/mo per CMK while enabled"
+    daily_usd: 0.033
+    accounts: [dev]
+
+  - slug: capstone
+    title: "Capstone — Cross-Account Conditional Chain"
+    category: Capstone
+    technique: "3-account, 10-hop chain teaching ResourceTag, PrincipalTag, SourceAccount, ExternalId, kms:ViaService + EncryptionContext, and session-policy scope-down"
+    has_victim: false
+    services: [iam, sts, ssm, kms, lambda, ec2, eks]
+    cost: "~$4.68/day (shared EKS + EC2 jumpbox + KMS CMK)"
+    daily_usd: 4.68
+    shared_resource: shared_eks
+    accounts: [dev, staging, prod]
