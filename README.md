@@ -1,30 +1,7 @@
 # `so-aws-lab`
+Companion deployment tool for the AWS for Red Teamers course — https://academy.specterops.io/aws-for-red-teamers
 
-A Go TUI + CLI that deploys intentionally vulnerable AWS labs into **your own
-sandbox AWS account**. Each lab is a Terraform module gated by an
-`enable_<lab>` variable — the TUI toggles them and runs `terraform apply`.
-
-Modeled on [DataDog's `plabs`](https://github.com/DataDog/pathfinding-labs).
-
-## Self-contained
-
-The Terraform modules are **embedded in the binary**. There is no repo to
-clone, no clone URL to configure, and no git dependency. On first run they are
-extracted to `~/.so-aws-lab/workspace/`, and upgrading the binary upgrades the
-Terraform in place — state and the provider cache are left untouched.
-
-Solution scripts are deliberately **not** included. This repo deploys the labs;
-it does not answer them.
-
-```
-cmd/so-aws-lab/        entrypoint (cobra commands + init wizard)
-internal/config/       ~/.so-aws-lab/config.yaml read/write, AWS region metadata
-internal/labs/         embedded labs.yaml catalog
-internal/workspace/    embedded terraform, extracted on demand
-internal/runner/       shells out to terraform; syncs ~/.aws/config profiles
-internal/tui/          bubbletea UI
-internal/awsconfig/    managed-block writer for ~/.aws/config
-```
+TUI Modeled on [DataDog's `plabs`](https://github.com/DataDog/pathfinding-labs).
 
 ## Prerequisites
 
@@ -34,9 +11,7 @@ must be on `$PATH`:
 - `terraform` >= 1.6
 - `aws` CLI v2, configured with a named profile for your sandbox account
 
-Plus a throwaway AWS account you have admin in. **Do not use production.**
-
-## Install
+## Installation
 
 ### Install script
 
@@ -53,21 +28,6 @@ dependencies.
 | `SO_AWS_LAB_VERSION` | Install a specific tag (e.g. `v0.1.0`) instead of latest |
 | `SO_AWS_LAB_BIN_DIR` | Install somewhere other than `~/.local/bin` |
 
-### Manual download
-
-Prebuilt binaries for macOS, Linux, and Windows (amd64 + arm64) are attached to
-each [release](https://github.com/specterops/so-aws-lab/releases), alongside a
-`checksums.txt` worth verifying.
-
-Binaries downloaded through a *browser* get quarantined by macOS Gatekeeper and
-refuse to run until you clear the attribute:
-
-```sh
-xattr -d com.apple.quarantine ./so-aws-lab
-```
-
-The `curl` install above doesn't set that attribute, which is why it's preferred
-over a browser download.
 
 ## Usage
 
@@ -111,7 +71,7 @@ Reaching the *target* role is the exercise — only entry roles get a profile.
 
 ## Cost
 
-Most labs are free (IAM-only). Labs that provision billable infrastructure
+Most labs are free, buts all labs that provision billable infrastructure
 carry a `cost`/`daily_usd` field in `internal/labs/labs.yaml` and are marked in
 the TUI. Run `so-aws-lab destroy` when you're done.
 
@@ -122,25 +82,6 @@ make build      # -> bin/so-aws-lab
 make install    # -> $GOBIN/so-aws-lab
 make test
 ```
-
-## Releasing
-
-Tag and push; the `release` workflow runs GoReleaser:
-
-```sh
-git tag -a v0.1.0 -m "v0.1.0" && git push origin v0.1.0
-```
-
-Dependency notices are regenerated as a release pre-hook, and the build fails
-if any linked module has no license file. To refresh them by hand:
-
-```sh
-make third-party
-```
-
-### Homebrew tap
-
-Homebrew publishing is currently disabled.
 
 ## License
 
