@@ -80,46 +80,41 @@ release:
 
     Requires `terraform` and the `aws` CLI on your `$PATH`.
 
-# Homebrew tap. Each tagged release commits Casks/so-aws-lab.rb to
-# github.com/specterops/homebrew-labs, which users install from as:
+# Homebrew tap — currently disabled.
 #
-#   brew install specterops/labs/so-aws-lab
+# To enable: set a HOMEBREW_TAP_TOKEN secret with `contents: write` on
+# specterops/homebrew-labs, then uncomment this block and the matching line in
+# .github/workflows/release.yml.
 #
-# Homebrew strips the mandatory "homebrew-" prefix, so the tap repo name must
-# stay homebrew-labs for that command to resolve. The tap is a collection:
-# future lab tooling drops in as another cask, not another tap repo.
+# Users then install with `brew install specterops/labs/so-aws-lab`. Homebrew
+# strips the mandatory "homebrew-" prefix, so the tap repo must stay named
+# homebrew-labs for that to resolve. It's a cask rather than a formula because
+# GoReleaser deprecated `brews`; casks are macOS-only, so install.sh remains
+# the Linux path.
 #
-# This is a cask, not a formula: GoReleaser deprecated `brews` because formulae
-# that just drop a pre-built binary were always a hack. The tradeoff is that
-# Homebrew casks are macOS-only — Linux users install via install.sh, which
-# covers linux/amd64 and linux/arm64.
-#
-# Requires a HOMEBREW_TAP_TOKEN secret: a PAT with `contents: write` on the tap
-# repo. The workflow's default GITHUB_TOKEN is scoped to this repository only
-# and cannot push to another one.
-homebrew_casks:
-  - name: so-aws-lab
-    repository:
-      owner: specterops
-      name: homebrew-labs
-      branch: main
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Casks
-    homepage: "https://github.com/specterops/so-aws-lab"
-    description: "Deploy intentionally vulnerable AWS labs into your own sandbox account"
-    binaries:
-      - so-aws-lab
-    # The reason Homebrew is the preferred channel: it installs the runtime
-    # dependencies, where install.sh can only warn that they're missing.
-    dependencies:
-      - formula: terraform
-      - formula: awscli
-    # The release binaries are not signed or notarized, so Gatekeeper quarantines
-    # anything Homebrew stages and macOS reports it as "damaged". Strip the
-    # attribute on install. Remove this once the binaries are properly signed.
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/so-aws-lab"]
-          end
+# homebrew_casks:
+#   - name: so-aws-lab
+#     repository:
+#       owner: specterops
+#       name: homebrew-labs
+#       branch: main
+#       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+#     directory: Casks
+#     homepage: "https://github.com/specterops/so-aws-lab"
+#     description: "Deploy intentionally vulnerable AWS labs into your own sandbox account"
+#     binaries:
+#       - so-aws-lab
+#     # The reason Homebrew is the preferred channel: it installs the runtime
+#     # dependencies, where install.sh can only warn that they're missing.
+#     dependencies:
+#       - formula: terraform
+#       - formula: awscli
+#     # The release binaries are not signed or notarized, so Gatekeeper
+#     # quarantines anything Homebrew stages and macOS reports it as "damaged".
+#     # Strip the attribute on install. Remove once the binaries are signed.
+#     hooks:
+#       post:
+#         install: |
+#           if OS.mac?
+#             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/so-aws-lab"]
+#           end

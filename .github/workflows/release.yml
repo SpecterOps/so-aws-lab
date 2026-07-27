@@ -28,6 +28,8 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # PAT with `contents: write` on SpecterOps/homebrew-labs. GITHUB_TOKEN
-          # above is scoped to this repo only and cannot push to the tap.
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # Homebrew tap publishing is currently disabled. Uncomment together
+          # with the homebrew_casks block in .goreleaser.yaml. GITHUB_TOKEN is
+          # scoped to this repo only and cannot push to the tap, so the tap
+          # needs its own token.
+          # HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

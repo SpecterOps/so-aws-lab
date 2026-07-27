@@ -38,29 +38,6 @@ Plus a throwaway AWS account you have admin in. **Do not use production.**
 
 ## Install
 
-### Homebrew (macOS)
-
-```sh
-brew install specterops/labs/so-aws-lab
-```
-
-The preferred install on macOS: the cask declares `terraform` and `awscli` as
-real dependencies, so Homebrew installs them for you — every other method can
-only warn that they're missing. It also clears the Gatekeeper quarantine
-attribute on install, so the binary just runs.
-
-Equivalent, if you'd rather tap first:
-
-```sh
-brew tap specterops/labs
-brew install so-aws-lab
-```
-
-Upgrade with `brew upgrade --cask so-aws-lab`.
-
-Homebrew casks are macOS-only. On Linux use the install script below, which
-covers linux/amd64 and linux/arm64.
-
 ### Install script
 
 ```sh
@@ -68,8 +45,8 @@ curl -fsSL https://raw.githubusercontent.com/specterops/so-aws-lab/main/install.
 ```
 
 Installs into `~/.local/bin`. The script verifies the release checksum, tells
-you if that directory isn't on your `$PATH`, and flags missing runtime
-dependencies (without installing them — that's the Homebrew advantage above).
+you if that directory isn't on your `$PATH`, and flags any missing runtime
+dependencies.
 
 | Var | Effect |
 | --- | --- |
@@ -89,8 +66,8 @@ refuse to run until you clear the attribute:
 xattr -d com.apple.quarantine ./so-aws-lab
 ```
 
-Neither the Homebrew nor the `curl` path sets that attribute, which is why both
-are preferred over a browser download.
+The `curl` install above doesn't set that attribute, which is why it's preferred
+over a browser download.
 
 ## Usage
 
@@ -163,27 +140,7 @@ make third-party
 
 ### Homebrew tap
 
-Every tag commits `Casks/so-aws-lab.rb` to
-[specterops/homebrew-labs](https://github.com/specterops/homebrew-labs).
-
-The one prerequisite is a **`HOMEBREW_TAP_TOKEN`** repository secret: a PAT with
-`contents: write` on the tap repo. The workflow's default `GITHUB_TOKEN` is
-scoped to this repository only and cannot push to another one, so without this
-secret the release builds fine and then fails at the publish step.
-
-```sh
-gh secret set HOMEBREW_TAP_TOKEN --repo SpecterOps/so-aws-lab
-```
-
-The tap repo name must stay `homebrew-labs` exactly. Homebrew strips the
-mandatory `homebrew-` prefix, and the remaining `labs` is what makes
-`brew install specterops/labs/so-aws-lab` resolve — renaming the repo changes
-the install command. Future lab tooling joins as another cask in the same tap
-rather than a new tap repo.
-
-It's a cask rather than a formula because GoReleaser deprecated `brews`:
-formulae that merely drop a pre-built binary were always a workaround. Casks
-are macOS-only, which is why `install.sh` remains the Linux path.
+Homebrew publishing is currently disabled.
 
 ## License
 
