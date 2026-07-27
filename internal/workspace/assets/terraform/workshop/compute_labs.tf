@@ -401,12 +401,17 @@ resource "aws_iam_role_policy" "cloudformationcreatestack_service_perms" {
         Resource = ["arn:${local.partition}:iam::${local.account_id}:role/${var.lab_prefix}-cloudformationcreatestack-donut"]
       },
       {
-        Effect = "Allow"
-        Action = ["ssm:GetParameter", "kms:Decrypt"]
-        Resource = [
-          "arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter/labs/${var.lab_prefix}/cloudformationcreatestack/flag",
-          "arn:${local.partition}:kms:${local.region}:${local.account_id}:alias/aws/ssm",
-        ]
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter"]
+        Resource = ["arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter/labs/${var.lab_prefix}/cloudformationcreatestack/flag"]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = ["*"]
+        Condition = {
+          StringEquals = { "kms:ViaService" = "ssm.${local.region}.amazonaws.com" }
+        }
       },
       {
         Effect   = "Allow"
@@ -487,12 +492,17 @@ resource "aws_iam_role_policy" "cloudformationcreatechangeset_service_perms" {
         Resource = ["arn:${local.partition}:iam::${local.account_id}:role/${var.lab_prefix}-cloudformationcreatechangeset-donut"]
       },
       {
-        Effect = "Allow"
-        Action = ["ssm:GetParameter", "kms:Decrypt"]
-        Resource = [
-          "arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter/labs/${var.lab_prefix}/cloudformationcreatechangeset/flag",
-          "arn:${local.partition}:kms:${local.region}:${local.account_id}:alias/aws/ssm",
-        ]
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter"]
+        Resource = ["arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter/labs/${var.lab_prefix}/cloudformationcreatechangeset/flag"]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = ["*"]
+        Condition = {
+          StringEquals = { "kms:ViaService" = "ssm.${local.region}.amazonaws.com" }
+        }
       },
       {
         Effect   = "Allow"
@@ -506,6 +516,14 @@ resource "aws_iam_role_policy" "cloudformationcreatechangeset_service_perms" {
 resource "aws_cloudformation_stack" "cloudformationcreatechangeset_stack" {
   count = var.enable_cloudformationcreatechangeset ? 1 : 0
   name  = "${var.lab_prefix}-cloudformationcreatechangeset-stack"
+
+  # The stack is deployed WITH its privileged service role already attached.
+  # That is what makes this lab the strong form of the primitive: a change set
+  # executed against this stack reuses this role, so the student never needs
+  # iam:PassRole and never chooses the role. They inherit one someone else
+  # already blessed the stack with. Contrast the CreateStack lab, where the
+  # student stands up a new stack and must pass the role themselves.
+  iam_role_arn = aws_iam_role.cloudformationcreatechangeset_service[0].arn
 
   template_body = jsonencode({
     AWSTemplateFormatVersion = "2010-09-09"
@@ -545,12 +563,10 @@ module "lab_cloudformationcreatechangeset" {
       ]
       Resource = [aws_cloudformation_stack.cloudformationcreatechangeset_stack[0].id]
     },
-    {
-      Sid      = "PassServiceRole"
-      Effect   = "Allow"
-      Action   = ["iam:PassRole"]
-      Resource = [aws_iam_role.cloudformationcreatechangeset_service[0].arn]
-    },
+    # No iam:PassRole. The stack already carries its service role, so the change
+    # set reuses it and the student never passes a role. That absence is the
+    # whole lesson: CreateChangeSet on a role-bearing stack escalates without
+    # the PassRole grant that CreateStack requires.
     {
       Sid      = "ReadLeakedParam"
       Effect   = "Allow"

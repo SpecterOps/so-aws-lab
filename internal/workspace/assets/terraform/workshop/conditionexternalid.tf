@@ -73,10 +73,16 @@ resource "aws_iam_policy" "cei_entry_boundary" {
         Resource = ["arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter${local.cei_extid_param}"]
       },
       {
+        # KMS authorizes against a key ARN, never an alias ARN, so naming the
+        # alias matched nothing. Scope by kms:ViaService instead, which mirrors
+        # what the aws/ssm key policy itself enforces.
         Sid      = "DecryptSSM"
         Effect   = "Allow"
         Action   = ["kms:Decrypt"]
-        Resource = ["arn:${local.partition}:kms:${local.region}:${local.account_id}:alias/aws/ssm"]
+        Resource = ["*"]
+        Condition = {
+          StringEquals = { "kms:ViaService" = "ssm.${local.region}.amazonaws.com" }
+        }
       },
       {
         Sid      = "AssumeTarget"
@@ -132,13 +138,18 @@ resource "aws_iam_role_policy" "cei_target_inline" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Sid    = "ReadFlag"
-      Effect = "Allow"
-      Action = ["ssm:GetParameter", "kms:Decrypt"]
-      Resource = [
-        "arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter${local.cei_flag_param}",
-        "arn:${local.partition}:kms:${local.region}:${local.account_id}:alias/aws/ssm",
-      ]
+      Sid      = "ReadFlag"
+      Effect   = "Allow"
+      Action   = ["ssm:GetParameter"]
+      Resource = ["arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter${local.cei_flag_param}"]
+      }, {
+      Sid      = "DecryptSSMFlag"
+      Effect   = "Allow"
+      Action   = ["kms:Decrypt"]
+      Resource = ["*"]
+      Condition = {
+        StringEquals = { "kms:ViaService" = "ssm.${local.region}.amazonaws.com" }
+      }
     }]
   })
 }

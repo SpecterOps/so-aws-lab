@@ -13,13 +13,13 @@ module "lab_ssmgetparameter" {
 
   entry_boundary_statements = [
     {
-      Sid    = "ReadCredsParam"
-      Effect = "Allow"
-      Action = ["ssm:GetParameter", "kms:Decrypt"]
-      Resource = [
-        "arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter/labs/${var.lab_prefix}/ssmgetparameter/creds",
-        "arn:${local.partition}:kms:${local.region}:${local.account_id}:alias/aws/ssm",
-      ]
+      # kms:Decrypt is not listed here. lab_common grants it on every entry
+      # boundary, scoped by kms:ViaService, because an alias ARN authorizes
+      # nothing and this module's statement type cannot carry a Condition.
+      Sid      = "ReadCredsParam"
+      Effect   = "Allow"
+      Action   = ["ssm:GetParameter"]
+      Resource = ["arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter/labs/${var.lab_prefix}/ssmgetparameter/creds"]
     },
   ]
 }

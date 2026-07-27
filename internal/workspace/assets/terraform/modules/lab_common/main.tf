@@ -72,6 +72,20 @@ locals {
       Resource = ["*"]
     },
     {
+      # Every lab flag is a SecureString on the aws/ssm managed key. KMS
+      # authorizes against a key ARN, never an alias ARN, so the old
+      # alias-scoped grant matched nothing. Scope by kms:ViaService instead,
+      # which mirrors the aws/ssm key policy and keeps this from becoming a
+      # decrypt grant on other labs' customer-managed keys.
+      Sid      = "DecryptSSMParams"
+      Effect   = "Allow"
+      Action   = ["kms:Decrypt"]
+      Resource = ["*"]
+      Condition = {
+        StringEquals = { "kms:ViaService" = "ssm.${local.region}.amazonaws.com" }
+      }
+    },
+    {
       Sid    = "LabSelfEnumeration"
       Effect = "Allow"
       Action = [
@@ -218,13 +232,21 @@ resource "aws_iam_role_policy" "target_read_flag" {
     Statement = concat(
       [
         {
-          Sid    = "ReadFlag"
-          Effect = "Allow"
-          Action = ["ssm:GetParameter", "kms:Decrypt"]
-          Resource = [
-            "arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter${local.flag_param_name}",
-            "arn:${local.partition}:kms:${local.region}:${local.account_id}:alias/aws/ssm",
-          ]
+          Sid      = "ReadFlag"
+          Effect   = "Allow"
+          Action   = ["ssm:GetParameter"]
+          Resource = ["arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter${local.flag_param_name}"]
+        },
+        {
+          # KMS authorizes against a key ARN, never an alias ARN. Scope by
+          # kms:ViaService, mirroring the aws/ssm key policy.
+          Sid      = "DecryptSSMFlag"
+          Effect   = "Allow"
+          Action   = ["kms:Decrypt"]
+          Resource = ["*"]
+          Condition = {
+            StringEquals = { "kms:ViaService" = "ssm.${local.region}.amazonaws.com" }
+          }
         },
       ],
       var.target_extra_statements,

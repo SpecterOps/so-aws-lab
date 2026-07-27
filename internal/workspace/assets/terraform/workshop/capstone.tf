@@ -222,10 +222,15 @@ resource "aws_iam_policy" "capstone_entry_boundary" {
         Resource = ["arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter${local.capstone_hint_param}"]
       },
       {
+        # KMS authorizes against a key ARN, never an alias ARN. Scope by
+        # kms:ViaService, mirroring the aws/ssm key policy.
         Sid      = "DecryptSSMHint"
         Effect   = "Allow"
         Action   = ["kms:Decrypt"]
-        Resource = ["arn:${local.partition}:kms:${local.region}:${local.account_id}:alias/aws/ssm"]
+        Resource = ["*"]
+        Condition = {
+          StringEquals = { "kms:ViaService" = "ssm.${local.region}.amazonaws.com" }
+        }
       },
       {
         # The bridge's trust requires aws:RequestTag/team=red — set via
@@ -396,10 +401,15 @@ resource "aws_iam_role_policy" "capstone_bridge_inline" {
         ]
       },
       {
+        # KMS authorizes against a key ARN, never an alias ARN. Scope by
+        # kms:ViaService in the staging region, mirroring its aws/ssm key policy.
         Sid      = "DecryptSSMExternalId"
         Effect   = "Allow"
         Action   = ["kms:Decrypt"]
-        Resource = ["arn:${local.partition}:kms:${local.staging_region}:${local.staging_account_id}:alias/aws/ssm"]
+        Resource = ["*"]
+        Condition = {
+          StringEquals = { "kms:ViaService" = "ssm.${local.staging_region}.amazonaws.com" }
+        }
       },
       {
         Sid      = "AssumeDeployer"
@@ -911,7 +921,7 @@ resource "aws_kms_key" "capstone_prod_handoff" {
         Effect    = "Allow"
         Principal = { AWS = local.capstone_lambda_exec_role_arn }
         Action    = ["kms:Decrypt", "kms:DescribeKey"]
-        Resource  = "*"
+        Resource  = ["*"]
         Condition = {
           StringEquals = {
             "kms:ViaService"                = "lambda.${local.staging_region}.amazonaws.com"
@@ -1001,13 +1011,19 @@ resource "aws_iam_role_policy" "capstone_prod_reader_inline" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "ReadFlag"
-        Effect = "Allow"
-        Action = ["ssm:GetParameter", "ssm:GetParameters", "kms:Decrypt"]
-        Resource = [
-          "arn:${local.partition}:ssm:${local.prod_region}:${local.prod_account_id}:parameter${local.capstone_flag_param}",
-          "arn:${local.partition}:kms:${local.prod_region}:${local.prod_account_id}:alias/aws/ssm",
-        ]
+        Sid      = "ReadFlag"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter", "ssm:GetParameters"]
+        Resource = ["arn:${local.partition}:ssm:${local.prod_region}:${local.prod_account_id}:parameter${local.capstone_flag_param}"]
+      },
+      {
+        Sid      = "DecryptSSMFlag"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = ["*"]
+        Condition = {
+          StringEquals = { "kms:ViaService" = "ssm.${local.prod_region}.amazonaws.com" }
+        }
       },
     ]
   })

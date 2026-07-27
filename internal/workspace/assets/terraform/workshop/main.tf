@@ -44,4 +44,8 @@ module "shared_ec2_targets" {
     var.enable_ec2modifyuserdata ? "ec2modifyuserdata" : "",
     var.enable_ssmsendcommand ? "ssmsendcommand" : "",
   ])
+
+  # Slugs only. flag_values is sensitive because of its values, but the keys are
+  # just lab names, and they are what the flag-deny list is built from.
+  all_lab_slugs = nonsensitive(keys(var.flag_values))
 }

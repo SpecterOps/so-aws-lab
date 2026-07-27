@@ -187,12 +187,16 @@ resource "aws_iam_role_policy" "updateassumerolepolicy_target_readflag" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect = "Allow"
-      Action = ["ssm:GetParameter", "kms:Decrypt"]
-      Resource = [
-        aws_ssm_parameter.updateassumerolepolicy_flag[0].arn,
-        "arn:${local.partition}:kms:${local.region}:${local.account_id}:alias/aws/ssm",
-      ]
+      Effect   = "Allow"
+      Action   = ["ssm:GetParameter"]
+      Resource = [aws_ssm_parameter.updateassumerolepolicy_flag[0].arn]
+      }, {
+      Effect   = "Allow"
+      Action   = ["kms:Decrypt"]
+      Resource = ["*"]
+      Condition = {
+        StringEquals = { "kms:ViaService" = "ssm.${local.region}.amazonaws.com" }
+      }
     }]
   })
 }
