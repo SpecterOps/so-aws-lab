@@ -73,14 +73,17 @@ provider "aws" {
 # bootstrap admin. Terraform uses that access only to pre-create isolated
 # namespaces; students receive namespace-scoped access later in the exercise.
 provider "kubernetes" {
-  host = try(
-    module.capstone_prod_eks[0].cluster_endpoint,
-    "https://127.0.0.1",
+  # During enable and routine applies, depend directly on the managed module.
+  # During disable/destroy, the CLI supplies the existing connection so
+  # Terraform can delete namespaces before it deletes the EKS cluster.
+  host = var.capstone_existing_eks_endpoint != "" ? var.capstone_existing_eks_endpoint : (
+    var.enable_capstone ? module.capstone_prod_eks[0].cluster_endpoint : null
   )
-  cluster_ca_certificate = base64decode(try(
-    module.capstone_prod_eks[0].cluster_ca,
-    base64encode(""),
-  ))
+  cluster_ca_certificate = var.capstone_existing_eks_ca != "" ? base64decode(
+    var.capstone_existing_eks_ca
+    ) : (
+    var.enable_capstone ? base64decode(module.capstone_prod_eks[0].cluster_ca) : null
+  )
 
   # EKS creation plus its managed node group can exceed the 15-minute lifetime
   # of a static get-token result. Exec obtains a fresh prod token whenever the
@@ -92,7 +95,9 @@ provider "kubernetes" {
       "eks",
       "get-token",
       "--cluster-name",
-      try(module.capstone_prod_eks[0].cluster_name, "disabled"),
+      var.capstone_existing_eks_name != "" ? var.capstone_existing_eks_name : (
+        var.enable_capstone ? module.capstone_prod_eks[0].cluster_name : "disabled"
+      ),
       "--region",
       local.prod_region,
       "--profile",

@@ -31,6 +31,16 @@ type Runner struct {
 	streamCh   chan<- string
 }
 
+type eksDescription struct {
+	Cluster struct {
+		Name                 string `json:"name"`
+		Endpoint             string `json:"endpoint"`
+		CertificateAuthority struct {
+			Data string `json:"data"`
+		} `json:"certificateAuthority"`
+	} `json:"cluster"`
+}
+
 func New(cfg *config.Config, ll []labs.Lab) *Runner {
 	return &Runner{Cfg: cfg, Labs: ll, Stdout: os.Stdout, Stderr: os.Stderr}
 }
@@ -121,6 +131,57 @@ func (r *Runner) tfvarsArgs() []string {
 		args = append(args, "-var", fmt.Sprintf("enable_%s=%s", l.Slug, v))
 	}
 	return args
+}
+
+// existingCapstoneEKSArgs discovers the live shared cluster before a capstone
+// disable or destroy. Terraform still needs this connection after
+// enable_capstone becomes false so it can remove Kubernetes resources before
+// deleting the EKS module.
+func (r *Runner) existingCapstoneEKSArgs() ([]string, error) {
+	prod := r.Cfg.AccountOr("prod")
+	clusterName := fmt.Sprintf("%s-cs-eks", r.Cfg.LabPrefix)
+	cmd := exec.Command(
+		"aws", "eks", "describe-cluster",
+		"--name", clusterName,
+		"--profile", prod.Profile,
+		"--region", prod.Region,
+		"--output", "json",
+		"--no-cli-pager",
+	)
+	cmd.Env = append(os.Environ(),
+		"AWS_PROFILE="+prod.Profile,
+		"AWS_REGION="+prod.Region,
+		"AWS_DEFAULT_REGION="+prod.Region,
+	)
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Run(); err != nil {
+		message := strings.TrimSpace(output.String())
+		if strings.Contains(message, "ResourceNotFoundException") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("describe existing capstone EKS cluster %s: %w: %s", clusterName, err, message)
+	}
+
+	return existingCapstoneEKSVarArgs(output.Bytes())
+}
+
+func existingCapstoneEKSVarArgs(raw []byte) ([]string, error) {
+	var description eksDescription
+	if err := json.Unmarshal(raw, &description); err != nil {
+		return nil, fmt.Errorf("decode existing capstone EKS cluster: %w", err)
+	}
+	if description.Cluster.Name == "" ||
+		description.Cluster.Endpoint == "" ||
+		description.Cluster.CertificateAuthority.Data == "" {
+		return nil, fmt.Errorf("existing capstone EKS cluster response is missing connection data")
+	}
+	return []string{
+		"-var", "capstone_existing_eks_name=" + description.Cluster.Name,
+		"-var", "capstone_existing_eks_endpoint=" + description.Cluster.Endpoint,
+		"-var", "capstone_existing_eks_ca=" + description.Cluster.CertificateAuthority.Data,
+	}, nil
 }
 
 func (r *Runner) tfCmd(args ...string) *exec.Cmd {
@@ -253,7 +314,15 @@ func (r *Runner) Apply() error {
 	if err := r.Init(); err != nil {
 		return err
 	}
-	args := append([]string{"apply", "-auto-approve", "-parallelism=10"}, r.tfvarsArgs()...)
+	tfvars := r.tfvarsArgs()
+	if !r.Cfg.Enabled["capstone"] {
+		existingEKS, err := r.existingCapstoneEKSArgs()
+		if err != nil {
+			return err
+		}
+		tfvars = append(tfvars, existingEKS...)
+	}
+	args := append([]string{"apply", "-auto-approve", "-parallelism=10"}, tfvars...)
 	if err := r.tfCmd(args...).Run(); err != nil {
 		if r.shouldReconfigure() {
 			if err2 := r.reinitAndRetry(args); err2 == nil {
@@ -378,6 +447,11 @@ func (r *Runner) Destroy() error {
 	for _, l := range r.Labs {
 		args = append(args, "-var", fmt.Sprintf("enable_%s=false", l.Slug))
 	}
+	existingEKS, err := r.existingCapstoneEKSArgs()
+	if err != nil {
+		return err
+	}
+	args = append(args, existingEKS...)
 	if err := r.tfCmd(args...).Run(); err != nil {
 		if r.shouldReconfigure() {
 			if err2 := r.reinitAndRetry(args); err2 == nil {

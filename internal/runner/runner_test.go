@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"reflect"
 	"slices"
 	"testing"
 
@@ -31,5 +32,32 @@ func TestTFVarsArgsIncludesCapstoneRoster(t *testing.T) {
 		if !slices.Contains(args, want) {
 			t.Errorf("tfvars args are missing %q: %#v", want, args)
 		}
+	}
+}
+
+func TestExistingCapstoneEKSVarArgs(t *testing.T) {
+	got, err := existingCapstoneEKSVarArgs([]byte(`{
+		"cluster": {
+			"name": "workshop-cs-eks",
+			"endpoint": "https://example.eks.amazonaws.com",
+			"certificateAuthority": {"data": "Q0E="}
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"-var", "capstone_existing_eks_name=workshop-cs-eks",
+		"-var", "capstone_existing_eks_endpoint=https://example.eks.amazonaws.com",
+		"-var", "capstone_existing_eks_ca=Q0E=",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("existing EKS args\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestExistingCapstoneEKSVarArgsRequiresConnectionData(t *testing.T) {
+	if _, err := existingCapstoneEKSVarArgs([]byte(`{"cluster":{"name":"workshop-cs-eks"}}`)); err == nil {
+		t.Fatal("expected missing EKS connection data to fail")
 	}
 }

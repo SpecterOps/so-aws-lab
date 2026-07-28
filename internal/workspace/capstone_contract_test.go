@@ -262,6 +262,28 @@ func TestCapstoneWorkshopPoliciesScaleOnFreshAccounts(t *testing.T) {
 	}
 }
 
+func TestCapstoneKubernetesProviderUsesRealClusterEndpoint(t *testing.T) {
+	providers := readAsset(t, "assets/terraform/workshop/providers.tf")
+	variables := readAsset(t, "assets/terraform/workshop/variables.tf")
+
+	for _, required := range []string{
+		`variable "capstone_existing_eks_endpoint"`,
+		`variable "capstone_existing_eks_ca"`,
+		`variable "capstone_existing_eks_name"`,
+		`var.capstone_existing_eks_endpoint != "" ? var.capstone_existing_eks_endpoint`,
+		`module.capstone_prod_eks[0].cluster_ca`,
+		`var.capstone_existing_eks_name != "" ? var.capstone_existing_eks_name`,
+	} {
+		if !strings.Contains(providers+"\n"+variables, required) {
+			t.Errorf("capstone Kubernetes provider is missing real-cluster dependency %s", required)
+		}
+	}
+
+	if strings.Contains(providers, `"https://127.0.0.1"`) {
+		t.Error("capstone Kubernetes provider must not fall back to localhost")
+	}
+}
+
 func TestCapstonePathAgainstLocalGoAWSHoundSchema(t *testing.T) {
 	schemaPath := os.Getenv("GOAWSHOUND_SCHEMA")
 	if schemaPath == "" {

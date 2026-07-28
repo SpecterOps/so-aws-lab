@@ -155,6 +155,29 @@ variable "capstone_students" {
     error_message = "capstone_students accepts at most 50 entries; keys must be unique 1-12 character lowercase IDs (default is reserved), and each display label must contain 1-80 characters."
   }
 }
+
+# The CLI populates these only while disabling or destroying an existing
+# capstone. The Kubernetes provider needs the live cluster connection long
+# enough to remove namespaced resources before Terraform deletes the EKS
+# module. First-time enables use the module outputs directly.
+variable "capstone_existing_eks_name" {
+  type        = string
+  default     = ""
+  description = "Existing capstone EKS cluster name used during teardown."
+}
+
+variable "capstone_existing_eks_endpoint" {
+  type        = string
+  default     = ""
+  description = "Existing capstone EKS endpoint used during teardown."
+}
+
+variable "capstone_existing_eks_ca" {
+  type        = string
+  default     = ""
+  description = "Base64-encoded CA for the existing capstone EKS cluster used during teardown."
+}
+
 variable "enable_conditionresourcetag" {
   type    = bool
   default = false
