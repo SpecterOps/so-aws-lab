@@ -83,14 +83,25 @@ behavior.
 
 Workshop mode deploys isolated capstone chains for multiple students in the
 same dev, staging, and prod accounts. Configure the three account deployment
-profiles with `so-aws-lab init`, then replace the capstone roster. A value
-after `=` is an optional display label for the printed card:
+profiles with `so-aws-lab init`, then provide the number of students:
+
+```sh
+so-aws-lab capstone configure 30
+```
+
+That creates `student01` through `student30`. To put names on the printed
+cards, replace the generated roster with explicit IDs and optional display
+labels:
 
 ```sh
 so-aws-lab capstone configure \
   student01="Alice" \
   student02="Bob"
+```
 
+Then deploy the configured roster and issue its access cards:
+
+```sh
 so-aws-lab enable capstone
 so-aws-lab apply
 so-aws-lab status

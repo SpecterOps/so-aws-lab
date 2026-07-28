@@ -354,7 +354,10 @@ func disableCmd() *cobra.Command { return toggleCmd(false) }
 
 // --- capstone workshop roster ----------------------------------------------
 
-var capstoneStudentID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,11}$`)
+var (
+	capstoneStudentID    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,11}$`)
+	capstoneStudentCount = regexp.MustCompile(`^[0-9]+$`)
+)
 
 func capstoneCmd() *cobra.Command {
 	root := &cobra.Command{
@@ -364,14 +367,16 @@ func capstoneCmd() *cobra.Command {
 
 	var singleUser bool
 	configure := &cobra.Command{
-		Use:   "configure <student-id[=display-name]>...",
+		Use:   "configure <student-count|student-id[=display-name]...>",
 		Short: "Replace the workshop capstone roster",
+		Example: "  so-aws-lab capstone configure 30\n" +
+			"  so-aws-lab capstone configure student01=Alice student02=Bob",
 		Args: func(_ *cobra.Command, args []string) error {
 			if singleUser && len(args) > 0 {
 				return fmt.Errorf("--single-user cannot be combined with a student roster")
 			}
 			if !singleUser && len(args) == 0 {
-				return fmt.Errorf("provide at least one student ID or use --single-user")
+				return fmt.Errorf("provide a student count, at least one student ID, or use --single-user")
 			}
 			return nil
 		},
@@ -481,6 +486,18 @@ func capstoneCmd() *cobra.Command {
 }
 
 func parseCapstoneStudents(args []string) (map[string]string, error) {
+	if len(args) == 1 && capstoneStudentCount.MatchString(args[0]) {
+		count, err := strconv.Atoi(args[0])
+		if err != nil || count < 1 || count > 50 {
+			return nil, fmt.Errorf("student count must be between 1 and 50")
+		}
+		students := make(map[string]string, count)
+		for i := 1; i <= count; i++ {
+			id := fmt.Sprintf("student%02d", i)
+			students[id] = id
+		}
+		return students, nil
+	}
 	if len(args) > 50 {
 		return nil, fmt.Errorf("capstone roster supports at most 50 students")
 	}

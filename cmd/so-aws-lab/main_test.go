@@ -22,6 +22,29 @@ func TestParseCapstoneStudents(t *testing.T) {
 	}
 }
 
+func TestParseCapstoneStudentCount(t *testing.T) {
+	got, err := parseCapstoneStudents([]string{"3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"student01": "student01",
+		"student02": "student02",
+		"student03": "student03",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("students = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseCapstoneStudentCountRejectsOutOfRange(t *testing.T) {
+	for _, count := range []string{"0", "51", "999999999999999999999"} {
+		if _, err := parseCapstoneStudents([]string{count}); err == nil {
+			t.Errorf("parseCapstoneStudents(%q) succeeded, want error", count)
+		}
+	}
+}
+
 func TestParseCapstoneStudentsRejectsUnsafeIDs(t *testing.T) {
 	for _, input := range []string{
 		"Student=Alice",
