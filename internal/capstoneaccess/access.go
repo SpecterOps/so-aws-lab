@@ -59,6 +59,7 @@ type card struct {
 
 type cardPage struct {
 	GeneratedAt string
+	Region      string
 	Cards       []card
 }
 
@@ -69,6 +70,9 @@ type cardPage struct {
 func Generate(profile, region, outputPath string, students []Student) (Result, error) {
 	if profile == "" {
 		return Result{}, fmt.Errorf("dev AWS profile is required")
+	}
+	if region == "" {
+		return Result{}, fmt.Errorf("dev AWS region is required")
 	}
 	if len(students) == 0 {
 		return Result{}, fmt.Errorf("the deployed capstone roster is empty")
@@ -136,6 +140,7 @@ func Generate(profile, region, outputPath string, students []Student) (Result, e
 
 	path, err := writeCards(preparedOutput, cardPage{
 		GeneratedAt: time.Now().Format(time.RFC3339),
+		Region:      region,
 		Cards:       cards,
 	})
 	if err != nil {
@@ -386,7 +391,7 @@ var accessCardTemplate = template.Must(template.New("cards").Parse(`<!doctype ht
   <ol>
     <li>Open or scan the sign-in URL and enter the username and password above.</li>
     <li>Open or scan the role-switch URL. It is prefilled for <code>{{.RoleName}}</code>.</li>
-    <li>Choose <strong>Switch Role</strong>, then open AWS CloudShell in the dev region.</li>
+    <li>Choose <strong>Switch Role</strong>, then open AWS CloudShell in <code>{{$.Region}}</code>.</li>
     <li>Run <code>aws sts get-caller-identity</code>. The ARN must contain <code>assumed-role/{{.RoleName}}/</code>.</li>
   </ol>
   <div class="footer">

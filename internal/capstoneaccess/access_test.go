@@ -54,6 +54,7 @@ func TestWriteCardsIsPrivateAndEscapesLabels(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cards.html")
 	got, err := writeCards(path, cardPage{
 		GeneratedAt: "2026-07-27T12:00:00Z",
+		Region:      "us-east-1",
 		Cards: []card{{
 			Student: Student{
 				ID:               "student01",
@@ -94,6 +95,7 @@ func TestWriteCardsIsPrivateAndEscapesLabels(t *testing.T) {
 		"&lt;script&gt;alert(1)&lt;/script&gt;",
 		"Amber-river-cobalt-mango-42!",
 		"workshop-capstone-student01-carl",
+		"open AWS CloudShell in <code>us-east-1</code>",
 		`src="data:image/png;base64,AA=="`,
 	} {
 		if !strings.Contains(html, want) {
