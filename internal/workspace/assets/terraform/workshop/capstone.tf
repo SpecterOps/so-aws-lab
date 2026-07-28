@@ -386,14 +386,17 @@ data "archive_file" "capstone_bootstrap_zip" {
 resource "aws_lambda_function" "capstone_bootstrap_fn" {
   for_each = local.capstone_instances
 
-  function_name                  = "${each.value.prefix}-gate-golem"
-  role                           = aws_iam_role.capstone_entry[each.key].arn
-  runtime                        = "python3.12"
-  handler                        = "index.handler"
-  filename                       = data.archive_file.capstone_bootstrap_zip[each.key].output_path
-  source_code_hash               = data.archive_file.capstone_bootstrap_zip[each.key].output_base64sha256
-  timeout                        = 30
-  reserved_concurrent_executions = 2
+  function_name    = "${each.value.prefix}-gate-golem"
+  role             = aws_iam_role.capstone_entry[each.key].arn
+  runtime          = "python3.12"
+  handler          = "index.handler"
+  filename         = data.archive_file.capstone_bootstrap_zip[each.key].output_path
+  source_code_hash = data.archive_file.capstone_bootstrap_zip[each.key].output_base64sha256
+  timeout          = 30
+
+  # New workshop accounts can have a regional concurrency quota of 10, all of
+  # which Lambda requires to remain unreserved. Do not reserve concurrency on
+  # per-student functions or the capstone cannot deploy in those accounts.
 
   tags = {
     Lab     = "capstone"
@@ -674,12 +677,9 @@ resource "aws_iam_role_policy" "capstone_deployer_inline" {
         Effect = "Allow"
         Action = [
           "lambda:CreateFunction",
-          "lambda:DeleteFunctionConcurrency",
           "lambda:DeleteFunction",
           "lambda:GetFunction",
           "lambda:GetFunctionConfiguration",
-          "lambda:GetFunctionConcurrency",
-          "lambda:PutFunctionConcurrency",
           "lambda:TagResource",
           "lambda:UntagResource",
           "lambda:UpdateFunctionCode",
@@ -779,12 +779,11 @@ resource "aws_cloudformation_stack" "capstone_workflow" {
       WorkflowRelay = {
         Type = "AWS::Lambda::Function"
         Properties = {
-          FunctionName                 = each.value.relay_name
-          Role                         = aws_iam_role.capstone_deployer[each.key].arn
-          Runtime                      = "python3.12"
-          Handler                      = "index.handler"
-          Timeout                      = 30
-          ReservedConcurrentExecutions = 2
+          FunctionName = each.value.relay_name
+          Role         = aws_iam_role.capstone_deployer[each.key].arn
+          Runtime      = "python3.12"
+          Handler      = "index.handler"
+          Timeout      = 30
           Code = {
             ZipFile = <<-PY
               def handler(event, context):

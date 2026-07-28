@@ -218,13 +218,10 @@ func TestCapstoneMultiStudentIsolationContract(t *testing.T) {
 	}
 }
 
-func TestCapstoneWorkshopPoliciesScaleAndManageRelayConcurrency(t *testing.T) {
+func TestCapstoneWorkshopPoliciesScaleOnFreshAccounts(t *testing.T) {
 	capstone := readAsset(t, "assets/terraform/workshop/capstone.tf")
 
 	for _, required := range []string{
-		`"lambda:GetFunctionConcurrency"`,
-		`"lambda:PutFunctionConcurrency"`,
-		`"lambda:DeleteFunctionConcurrency"`,
 		`on_failure   = "DELETE"`,
 		`capstone_ec2_inline_policy = jsonencode({`,
 		`$${aws:PrincipalTag/Student}/prod-external-id`,
@@ -234,6 +231,18 @@ func TestCapstoneWorkshopPoliciesScaleAndManageRelayConcurrency(t *testing.T) {
 	} {
 		if !strings.Contains(capstone, required) {
 			t.Errorf("capstone is missing scalable workshop policy control %s", required)
+		}
+	}
+
+	for _, unsupportedReservation := range []string{
+		`reserved_concurrent_executions`,
+		`ReservedConcurrentExecutions`,
+		`"lambda:GetFunctionConcurrency"`,
+		`"lambda:PutFunctionConcurrency"`,
+		`"lambda:DeleteFunctionConcurrency"`,
+	} {
+		if strings.Contains(capstone, unsupportedReservation) {
+			t.Errorf("capstone reserves Lambda concurrency that fresh workshop accounts cannot provide: %s", unsupportedReservation)
 		}
 	}
 
