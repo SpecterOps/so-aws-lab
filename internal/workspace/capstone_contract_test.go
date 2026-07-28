@@ -168,7 +168,7 @@ func TestCapstoneMultiStudentIsolationContract(t *testing.T) {
 		`document_type   = "Command"`,
 		`each.value.ssm_document_arn`,
 		`"aws:PrincipalTag/Student" = "true"`,
-		`"aws:PrincipalTag/Student" = id`,
+		`"aws:PrincipalTag/Student" = each.key`,
 		`"eks:accessScope"  = "namespace"`,
 		`"eks:namespaces" = [each.value.namespace]`,
 		`"pod-security.kubernetes.io/enforce" = "restricted"`,
@@ -214,6 +214,39 @@ func TestCapstoneMultiStudentIsolationContract(t *testing.T) {
 	} {
 		if strings.Contains(capstone, unsafe) {
 			t.Errorf("multi-student capstone contains unsafe shared authorization %s", unsafe)
+		}
+	}
+}
+
+func TestCapstoneWorkshopPoliciesScaleAndManageRelayConcurrency(t *testing.T) {
+	capstone := readAsset(t, "assets/terraform/workshop/capstone.tf")
+
+	for _, required := range []string{
+		`"lambda:GetFunctionConcurrency"`,
+		`"lambda:PutFunctionConcurrency"`,
+		`"lambda:DeleteFunctionConcurrency"`,
+		`on_failure   = "DELETE"`,
+		`capstone_ec2_inline_policy = jsonencode({`,
+		`$${aws:PrincipalTag/Student}/prod-external-id`,
+		`$${aws:PrincipalTag/Student}-odette`,
+		`policy = local.capstone_ec2_inline_policy`,
+		`condition     = length(local.capstone_ec2_inline_policy) <= 10240`,
+	} {
+		if !strings.Contains(capstone, required) {
+			t.Errorf("capstone is missing scalable workshop policy control %s", required)
+		}
+	}
+
+	for _, rosterSizedStatement := range []string{
+		`for id, instance in local.capstone_instances : {
+        Sid      = "ReadProdFederationToken`,
+		`for id, instance in local.capstone_instances : {
+        Sid      = "DecryptOnlyThroughParameterStore`,
+		`for id, instance in local.capstone_instances : {
+        Sid      = "AssumeProdIncidentBridge`,
+	} {
+		if strings.Contains(capstone, rosterSizedStatement) {
+			t.Errorf("shared Katia role still expands one statement per student: %s", rosterSizedStatement)
 		}
 	}
 }

@@ -674,12 +674,16 @@ resource "aws_iam_role_policy" "capstone_deployer_inline" {
         Effect = "Allow"
         Action = [
           "lambda:CreateFunction",
+          "lambda:DeleteFunctionConcurrency",
           "lambda:DeleteFunction",
           "lambda:GetFunction",
           "lambda:GetFunctionConfiguration",
+          "lambda:GetFunctionConcurrency",
+          "lambda:PutFunctionConcurrency",
           "lambda:TagResource",
           "lambda:UntagResource",
           "lambda:UpdateFunctionCode",
+          "lambda:UpdateFunctionConfiguration",
         ]
         Resource = [each.value.relay_arn]
       },
@@ -766,6 +770,7 @@ resource "aws_cloudformation_stack" "capstone_workflow" {
 
   name         = each.value.stack_name
   iam_role_arn = aws_iam_role.capstone_deployer[each.key].arn
+  on_failure   = "DELETE"
 
   template_body = jsonencode({
     AWSTemplateFormatVersion = "2010-09-09"
@@ -933,16 +938,14 @@ resource "aws_ssm_parameter" "capstone_external_id" {
   }
 }
 
-resource "aws_iam_role_policy" "capstone_ec2_inline" {
-  count    = local.capstone_enabled
-  provider = aws.staging
-
-  name = "${local.capstone_prefix}-katia-policy"
-  role = aws_iam_role.capstone_ec2_role[0].name
-
-  policy = jsonencode({
+locals {
+  # Keep the shared Katia policy well below IAM's role quota as the roster
+  # grows. Principal tag policy variables select the current student's paths
+  # and role at request time; the per-student KMS key and Odette trust policies
+  # independently enforce the same Student tag.
+  capstone_ec2_inline_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = concat([
+    Statement = [
       {
         Sid      = "CreateKnownStudentSessionFromUntaggedInstance"
         Effect   = "Allow"
@@ -964,7 +967,7 @@ resource "aws_iam_role_policy" "capstone_ec2_inline" {
         Sid      = "PublishCredentialHandoffs"
         Effect   = "Allow"
         Action   = ["ssm:PutParameter"]
-        Resource = [for instance in values(local.capstone_instances) : instance.credential_param_arn]
+        Resource = ["arn:${local.partition}:ssm:${local.staging_region}:${local.staging_account_id}:parameter/labs/${var.lab_prefix}/capstone/*/katia-credentials"]
         Condition = {
           Null = {
             "aws:PrincipalTag/Student" = "true"
@@ -977,46 +980,62 @@ resource "aws_iam_role_policy" "capstone_ec2_inline" {
         Action   = local.capstone_self_enum_actions
         Resource = ["*"]
       },
-      ], [
-      for id, instance in local.capstone_instances : {
-        Sid      = "ReadProdFederationToken${replace(title(id), "-", "")}"
+      {
+        Sid      = "ReadOwnProdFederationToken"
         Effect   = "Allow"
         Action   = ["ssm:GetParameter", "ssm:GetParameters"]
-        Resource = [instance.external_param_arn]
+        Resource = ["arn:${local.partition}:ssm:${local.staging_region}:${local.staging_account_id}:parameter/labs/${var.lab_prefix}/capstone/$${aws:PrincipalTag/Student}/prod-external-id"]
         Condition = {
           StringEquals = {
-            "aws:PrincipalTag/Student" = id
+            "aws:PrincipalTag/Student" = keys(local.capstone_instances)
           }
         }
-      }
-      ], [
-      for id, instance in local.capstone_instances : {
-        Sid      = "DecryptOnlyThroughParameterStore${replace(title(id), "-", "")}"
+      },
+      {
+        Sid      = "DecryptOwnTokenOnlyThroughParameterStore"
         Effect   = "Allow"
-        Action   = ["kms:Decrypt", "kms:DescribeKey"]
-        Resource = [aws_kms_key.capstone_prod_handoff[id].arn]
+        Action   = ["kms:Decrypt"]
+        Resource = ["arn:${local.partition}:kms:${local.staging_region}:${local.staging_account_id}:key/*"]
         Condition = {
           StringEquals = {
-            "aws:PrincipalTag/Student"            = id
+            "aws:PrincipalTag/Student"            = keys(local.capstone_instances)
             "kms:ViaService"                      = "ssm.${local.staging_region}.amazonaws.com"
-            "kms:EncryptionContext:PARAMETER_ARN" = instance.external_param_arn
+            "kms:EncryptionContext:PARAMETER_ARN" = "arn:${local.partition}:ssm:${local.staging_region}:${local.staging_account_id}:parameter/labs/${var.lab_prefix}/capstone/$${aws:PrincipalTag/Student}/prod-external-id"
           }
         }
-      }
-      ], [
-      for id, instance in local.capstone_instances : {
-        Sid      = "AssumeProdIncidentBridge${replace(title(id), "-", "")}"
-        Effect   = "Allow"
-        Action   = ["sts:AssumeRole"]
-        Resource = [instance.prod_bridge_role_arn]
+      },
+      {
+        Sid    = "AssumeOwnProdIncidentBridge"
+        Effect = "Allow"
+        Action = ["sts:AssumeRole"]
+        Resource = [
+          "arn:${local.partition}:iam::${local.prod_account_id}:role/${local.capstone_prefix}-odette",
+          "arn:${local.partition}:iam::${local.prod_account_id}:role/${local.capstone_prefix}-$${aws:PrincipalTag/Student}-odette",
+        ]
         Condition = {
           StringEquals = {
-            "aws:PrincipalTag/Student" = id
+            "aws:PrincipalTag/Student" = keys(local.capstone_instances)
           }
         }
-      }
-    ])
+      },
+    ]
   })
+}
+
+resource "aws_iam_role_policy" "capstone_ec2_inline" {
+  count    = local.capstone_enabled
+  provider = aws.staging
+
+  name   = "${local.capstone_prefix}-katia-policy"
+  role   = aws_iam_role.capstone_ec2_role[0].name
+  policy = local.capstone_ec2_inline_policy
+
+  lifecycle {
+    precondition {
+      condition     = length(local.capstone_ec2_inline_policy) <= 10240
+      error_message = "The shared Katia inline policy exceeds IAM's 10,240-character role policy quota."
+    }
+  }
 }
 
 # ============================================================================
