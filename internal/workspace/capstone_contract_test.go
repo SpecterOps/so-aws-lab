@@ -169,6 +169,8 @@ func TestCapstoneMultiStudentIsolationContract(t *testing.T) {
 		`each.value.ssm_document_arn`,
 		`"aws:PrincipalTag/Student" = "true"`,
 		`"aws:PrincipalTag/Student" = each.key`,
+		`Sid    = "DenyTaggedSessionsReadingOtherStudentParameters"`,
+		`"aws:ResourceTag/Student" = "$${aws:PrincipalTag/Student}"`,
 		`"eks:accessScope"  = "namespace"`,
 		`"eks:namespaces" = [each.value.namespace]`,
 		`"pod-security.kubernetes.io/enforce" = "restricted"`,

@@ -974,6 +974,29 @@ locals {
         }
       },
       {
+        # AmazonSSMManagedInstanceCore grants GetParameter broadly so the
+        # untagged EC2 runtime can operate. Once the role is re-assumed with a
+        # Student session tag, explicitly deny reads of every other student's
+        # tagged capstone parameters.
+        Sid    = "DenyTaggedSessionsReadingOtherStudentParameters"
+        Effect = "Deny"
+        Action = [
+          "ssm:GetParameter",
+          "ssm:GetParameterHistory",
+          "ssm:GetParameters",
+          "ssm:GetParametersByPath",
+        ]
+        Resource = ["arn:${local.partition}:ssm:${local.staging_region}:${local.staging_account_id}:parameter/labs/${var.lab_prefix}/capstone/*"]
+        Condition = {
+          Null = {
+            "aws:PrincipalTag/Student" = "false"
+          }
+          StringNotEquals = {
+            "aws:ResourceTag/Student" = "$${aws:PrincipalTag/Student}"
+          }
+        }
+      },
+      {
         Sid      = "SelfEnumeration"
         Effect   = "Allow"
         Action   = local.capstone_self_enum_actions
