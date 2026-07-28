@@ -8,12 +8,16 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/specterops/so-aws-lab/internal/capstoneaccess"
 	"github.com/specterops/so-aws-lab/internal/config"
 	"github.com/specterops/so-aws-lab/internal/labs"
 	"github.com/specterops/so-aws-lab/internal/runner"
@@ -40,7 +44,7 @@ func main() {
 	root.SetVersionTemplate("so-aws-lab {{.Version}}\n")
 	root.PersistentFlags().BoolP("verbose", "v", false, "stream terraform output instead of showing a spinner")
 
-	root.AddCommand(initCmd(), enableCmd(), disableCmd(), applyCmd(), destroyCmd(), statusCmd())
+	root.AddCommand(initCmd(), enableCmd(), disableCmd(), applyCmd(), destroyCmd(), statusCmd(), capstoneCmd())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
@@ -348,6 +352,179 @@ func toggleCmd(want bool) *cobra.Command {
 func enableCmd() *cobra.Command  { return toggleCmd(true) }
 func disableCmd() *cobra.Command { return toggleCmd(false) }
 
+// --- capstone workshop roster ----------------------------------------------
+
+var capstoneStudentID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,11}$`)
+
+func capstoneCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "capstone",
+		Short: "Configure the optional multi-student capstone deployment",
+	}
+
+	var singleUser bool
+	configure := &cobra.Command{
+		Use:   "configure <student-id[=display-name]>...",
+		Short: "Replace the workshop capstone roster",
+		Args: func(_ *cobra.Command, args []string) error {
+			if singleUser && len(args) > 0 {
+				return fmt.Errorf("--single-user cannot be combined with a student roster")
+			}
+			if !singleUser && len(args) == 0 {
+				return fmt.Errorf("provide at least one student ID or use --single-user")
+			}
+			return nil
+		},
+		RunE: func(_ *cobra.Command, args []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			students := map[string]string{}
+			if !singleUser {
+				students, err = parseCapstoneStudents(args)
+				if err != nil {
+					return err
+				}
+			}
+			cfg.Capstone.Students = students
+			if err := cfg.Save(); err != nil {
+				return err
+			}
+			printCapstoneConfig(cfg)
+			return nil
+		},
+	}
+	configure.Flags().BoolVar(&singleUser, "single-user", false, "clear the roster and use the original single-student deployment")
+
+	show := &cobra.Command{
+		Use:   "show",
+		Short: "Show the configured capstone roster",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			printCapstoneConfig(cfg)
+			return nil
+		},
+	}
+
+	var cardsOutput string
+	accessCards := &cobra.Command{
+		Use:   "access-cards",
+		Short: "Create or rotate console passwords and write printable access cards",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			cfg, err := config.Load()
+			if err != nil {
+				return err
+			}
+			if len(cfg.Capstone.Students) == 0 {
+				return fmt.Errorf("access cards require a multi-student roster")
+			}
+			if !cfg.Enabled["capstone"] {
+				return fmt.Errorf("enable and apply the capstone before issuing access cards")
+			}
+			ll, err := labs.Load()
+			if err != nil {
+				return err
+			}
+			rn := runner.New(cfg, ll)
+			_, _, _, deployed, err := rn.Outputs()
+			if err != nil {
+				return fmt.Errorf("read deployed capstone roster: %w", err)
+			}
+			if len(deployed) != len(cfg.Capstone.Students) {
+				return fmt.Errorf("configured and deployed rosters differ; run `so-aws-lab apply` before issuing cards")
+			}
+
+			students := make([]capstoneaccess.Student, 0, len(cfg.Capstone.Students))
+			for id, label := range cfg.Capstone.Students {
+				status := deployed[id]
+				if status == nil || status.BootstrapUserName == "" {
+					return fmt.Errorf("student %s has no deployed bootstrap user; run `so-aws-lab apply`", id)
+				}
+				students = append(students, capstoneaccess.Student{
+					ID:               id,
+					Label:            label,
+					UserName:         status.BootstrapUserName,
+					EntryRoleARN:     status.EntryRoleARN,
+					ConsoleSigninURL: status.ConsoleSigninURL,
+				})
+			}
+
+			output := cardsOutput
+			if output == "" {
+				home, err := os.UserHomeDir()
+				if err != nil {
+					return fmt.Errorf("resolve access-card output: %w", err)
+				}
+				output = filepath.Join(home, ".so-aws-lab", "capstone-access-cards.html")
+			}
+			dev := cfg.Primary()
+			result, err := capstoneaccess.Generate(dev.Profile, dev.Region, output, students)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("wrote %d private access card(s) to %s (mode 0600)\n", result.Count, result.Path)
+			fmt.Println("This file contains active passwords. Print it, then securely delete it after distribution.")
+			fmt.Println("Running access-cards again rotates every workshop password and invalidates older cards.")
+			return nil
+		},
+	}
+	accessCards.Flags().StringVar(&cardsOutput, "output", "", "private HTML output path (default: ~/.so-aws-lab/capstone-access-cards.html)")
+
+	root.AddCommand(configure, show, accessCards)
+	return root
+}
+
+func parseCapstoneStudents(args []string) (map[string]string, error) {
+	if len(args) > 50 {
+		return nil, fmt.Errorf("capstone roster supports at most 50 students")
+	}
+	students := make(map[string]string, len(args))
+	for _, arg := range args {
+		id, label, hasLabel := strings.Cut(arg, "=")
+		id = strings.TrimSpace(id)
+		label = strings.TrimSpace(label)
+		if id == "" || (hasLabel && label == "") {
+			return nil, fmt.Errorf("invalid student %q: use student-id or student-id=display-name", arg)
+		}
+		if id == "default" || !capstoneStudentID.MatchString(id) {
+			return nil, fmt.Errorf("invalid student ID %q: use 1-12 lowercase letters, digits, or hyphens; \"default\" is reserved", id)
+		}
+		if !hasLabel {
+			label = id
+		}
+		if len(label) > 80 {
+			return nil, fmt.Errorf("display name for %q exceeds 80 characters", id)
+		}
+		if _, exists := students[id]; exists {
+			return nil, fmt.Errorf("duplicate student ID %q", id)
+		}
+		students[id] = label
+	}
+	return students, nil
+}
+
+func printCapstoneConfig(cfg *config.Config) {
+	if len(cfg.Capstone.Students) == 0 {
+		fmt.Println("mode:              single student")
+		return
+	}
+	fmt.Printf("mode:              multi-student (%d)\n", len(cfg.Capstone.Students))
+	ids := make([]string, 0, len(cfg.Capstone.Students))
+	for id := range cfg.Capstone.Students {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		fmt.Printf("  %-12s %s\n", id, cfg.Capstone.Students[id])
+	}
+}
+
 // --- apply / destroy --------------------------------------------------------
 
 func applyCmd() *cobra.Command {
@@ -447,7 +624,7 @@ func statusCmd() *cobra.Command {
 				return err
 			}
 			rn := runner.New(cfg, ll)
-			out, accountID, _, err := rn.Outputs()
+			out, accountID, _, capstoneStudents, err := rn.Outputs()
 			if err != nil {
 				return err
 			}
@@ -462,6 +639,26 @@ func statusCmd() *cobra.Command {
 				fmt.Printf("%-32s entry=%s\n", l.Slug, st.EntryRoleARN)
 				fmt.Printf("%-32s target=%s\n", "", st.TargetRoleARN)
 				fmt.Printf("%-32s flag=%s\n", "", st.FlagParameterName)
+			}
+			if len(capstoneStudents) > 0 {
+				fmt.Println()
+				fmt.Println("capstone students:")
+				ids := make([]string, 0, len(capstoneStudents))
+				for id := range capstoneStudents {
+					ids = append(ids, id)
+				}
+				sort.Strings(ids)
+				for _, id := range ids {
+					st := capstoneStudents[id]
+					if st.BootstrapUserName != "" {
+						fmt.Printf("  %-12s label=%s bootstrap-user=%s\n", id, st.Label, st.BootstrapUserName)
+					} else {
+						fmt.Printf("  %-12s single-student mode\n", id)
+					}
+					fmt.Printf("  %-12s entry=%s\n", "", st.EntryRoleARN)
+					fmt.Printf("  %-12s target=%s\n", "", st.TargetRoleARN)
+					fmt.Printf("  %-12s namespace=%s flag=%s\n", "", st.Namespace, st.FlagLocation)
+				}
 			}
 			return nil
 		},

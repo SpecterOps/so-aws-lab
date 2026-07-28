@@ -102,6 +102,7 @@ func (r *Runner) tfvarsArgs() []string {
 	dev := r.Cfg.Primary()
 	staging := r.Cfg.Accounts["staging"]
 	prod := r.Cfg.Accounts["prod"]
+	students, _ := json.Marshal(r.Cfg.Capstone.Students)
 
 	args := []string{}
 	args = append(args, "-var", fmt.Sprintf("lab_prefix=%s", r.Cfg.LabPrefix))
@@ -111,6 +112,7 @@ func (r *Runner) tfvarsArgs() []string {
 	args = append(args, "-var", fmt.Sprintf("staging_region=%s", staging.Region))
 	args = append(args, "-var", fmt.Sprintf("prod_profile=%s", prod.Profile))
 	args = append(args, "-var", fmt.Sprintf("prod_region=%s", prod.Region))
+	args = append(args, "-var", fmt.Sprintf("capstone_students=%s", students))
 	for _, l := range r.Labs {
 		v := "false"
 		if r.Cfg.Enabled[l.Slug] {
@@ -290,7 +292,7 @@ func (r *Runner) syncEntryProfiles() {
 // entry ARN's account to a configured account, so multi-account labs still get
 // a source profile that can actually assume the role.
 func (r *Runner) buildEntryProfiles() ([]awsconfig.Profile, error) {
-	out, _, accountIDs, err := r.Outputs()
+	out, _, accountIDs, _, err := r.Outputs()
 	if err != nil {
 		return nil, err
 	}
@@ -362,6 +364,7 @@ func (r *Runner) Destroy() error {
 	dev := r.Cfg.Primary()
 	staging := r.Cfg.Accounts["staging"]
 	prod := r.Cfg.Accounts["prod"]
+	students, _ := json.Marshal(r.Cfg.Capstone.Students)
 	args := []string{"destroy", "-auto-approve", "-parallelism=10",
 		fmt.Sprintf("-var=lab_prefix=%s", r.Cfg.LabPrefix),
 		fmt.Sprintf("-var=dev_profile=%s", dev.Profile),
@@ -370,6 +373,7 @@ func (r *Runner) Destroy() error {
 		fmt.Sprintf("-var=staging_region=%s", staging.Region),
 		fmt.Sprintf("-var=prod_profile=%s", prod.Profile),
 		fmt.Sprintf("-var=prod_region=%s", prod.Region),
+		fmt.Sprintf("-var=capstone_students=%s", students),
 	}
 	for _, l := range r.Labs {
 		args = append(args, "-var", fmt.Sprintf("enable_%s=false", l.Slug))
@@ -442,12 +446,24 @@ type LabStatus struct {
 	FlagParameterName string `json:"flag_parameter_name"`
 }
 
-// Outputs parses `terraform output -json` and returns the per-lab info, the
-// dev account ID, and a map of every configured account's ID
-// (keys: "dev", "staging", "prod").
-func (r *Runner) Outputs() (map[string]*LabStatus, string, map[string]string, error) {
+// CapstoneStudentStatus contains the non-secret identifiers an instructor
+// needs to distribute and validate one isolated workshop instance.
+type CapstoneStudentStatus struct {
+	Label             string
+	BootstrapUserName string
+	ConsoleSigninURL  string
+	EntryRoleARN      string
+	TargetRoleARN     string
+	Namespace         string
+	FlagLocation      string
+}
+
+// Outputs parses `terraform output -json` and returns per-lab info, the dev
+// account ID, every configured account's ID, and the optional per-student
+// capstone identifiers.
+func (r *Runner) Outputs() (map[string]*LabStatus, string, map[string]string, map[string]*CapstoneStudentStatus, error) {
 	if err := r.Init(); err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, nil, err
 	}
 	var buf bytes.Buffer
 	cmd := exec.Command("terraform", "output", "-json")
@@ -456,13 +472,13 @@ func (r *Runner) Outputs() (map[string]*LabStatus, string, map[string]string, er
 	cmd.Stdout = &buf
 	cmd.Stderr = io.Discard
 	if err := cmd.Run(); err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, nil, err
 	}
 	var raw map[string]struct {
 		Value any `json:"value"`
 	}
 	if err := json.Unmarshal(buf.Bytes(), &raw); err != nil {
-		return nil, "", nil, err
+		return nil, "", nil, nil, err
 	}
 	out := map[string]*LabStatus{}
 	if labsOut, ok := raw["labs"]; ok {
@@ -505,7 +521,34 @@ func (r *Runner) Outputs() (map[string]*LabStatus, string, map[string]string, er
 	if accountIDs["dev"] == "" && accountID != "" {
 		accountIDs["dev"] = accountID
 	}
-	return out, accountID, accountIDs, nil
+
+	capstoneStudents := map[string]*CapstoneStudentStatus{}
+	if v, ok := raw["capstone_students"]; ok {
+		if m, ok := v.Value.(map[string]any); ok {
+			for id, entry := range m {
+				inner, ok := entry.(map[string]any)
+				if !ok {
+					continue
+				}
+				bucket := str(inner["flag_bucket_name"])
+				key := str(inner["flag_object_key"])
+				flagLocation := ""
+				if bucket != "" && key != "" {
+					flagLocation = "s3://" + bucket + "/" + key
+				}
+				capstoneStudents[id] = &CapstoneStudentStatus{
+					Label:             str(inner["student_label"]),
+					BootstrapUserName: str(inner["bootstrap_user_name"]),
+					ConsoleSigninURL:  str(inner["console_signin_url"]),
+					EntryRoleARN:      str(inner["entry_role_arn"]),
+					TargetRoleARN:     str(inner["target_role_arn"]),
+					Namespace:         str(inner["kubernetes_namespace"]),
+					FlagLocation:      flagLocation,
+				}
+			}
+		}
+	}
+	return out, accountID, accountIDs, capstoneStudents, nil
 }
 
 func str(v any) string {

@@ -1,6 +1,6 @@
 // Package config reads and writes ~/.so-aws-lab/config.yaml — the persistent
 // state for the TUI (AWS profiles per named account, lab prefix, enabled
-// lab set).
+// lab set, and optional multi-student capstone roster).
 //
 // The terraform is embedded in the binary and extracted by the workspace
 // package, so there is no repo path, clone URL, or git ref to configure.
@@ -30,10 +30,18 @@ type Account struct {
 	Region  string `yaml:"region"`
 }
 
+// CapstoneConfig controls the optional workshop-scale deployment. Students maps
+// a short, stable lab ID to the label printed on that student's access card.
+// An empty map preserves the original single-student deployment.
+type CapstoneConfig struct {
+	Students map[string]string `yaml:"students,omitempty"`
+}
+
 type Config struct {
 	Accounts  map[string]Account `yaml:"accounts"`
 	LabPrefix string             `yaml:"lab_prefix"`
 	Enabled   map[string]bool    `yaml:"enabled"`
+	Capstone  CapstoneConfig     `yaml:"capstone,omitempty"`
 
 	// Legacy single-account fields. Kept for backwards compat on read; folded
 	// into Accounts[PrimaryAccount] on next save.
@@ -77,6 +85,9 @@ func newDefault() *Config {
 		Accounts:  map[string]Account{},
 		LabPrefix: "so-aws-lab",
 		Enabled:   map[string]bool{},
+		Capstone: CapstoneConfig{
+			Students: map[string]string{},
+		},
 	}
 }
 
@@ -89,6 +100,9 @@ func (c *Config) ensureDefaults() {
 	}
 	if c.LabPrefix == "" {
 		c.LabPrefix = "so-aws-lab"
+	}
+	if c.Capstone.Students == nil {
+		c.Capstone.Students = map[string]string{}
 	}
 }
 

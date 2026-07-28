@@ -839,6 +839,10 @@ func (m *Model) totalDailyUSD() float64 {
 			seenShared[l.SharedResource] = true
 		}
 		total += l.DailyUSD
+		if l.Slug == "capstone" && len(m.cfg.Capstone.Students) > 1 {
+			// The catalog includes one student's two $1/month KMS keys.
+			total += float64(len(m.cfg.Capstone.Students)-1) * (2.0 / 30.0)
+		}
 	}
 	return total
 }
@@ -877,14 +881,29 @@ func (m *Model) renderDetail(bodyH, contentW int) string {
 		"",
 	}
 
-	// The entry role is where every lab starts. It lives in the lab's first
-	// account (dev for single-account labs) and is assumed from that account's
-	// profile.
+	// Every lab starts from a managed entry-role profile. The capstone keeps its
+	// prod Mongo target and S3 objective while using the same entry-role flow.
+	isCapstone := l.Slug == "capstone"
+	isMultiCapstone := isCapstone && len(m.cfg.Capstone.Students) > 0
 	entryAcct := labAccounts(l)[0]
 	acct := m.cfg.AccountOr(entryAcct)
 	acctID := m.accountIDs[entryAcct]
 	entryARN := iamRoleARN(acctID, entryAcct, prefix, l.Slug, "carl")
 	targetARN := iamRoleARN(acctID, entryAcct, prefix, l.Slug, "donut")
+	flagLocation := "/labs/" + prefix + "/" + l.Slug + "/flag"
+	if isCapstone {
+		prodID := m.accountIDs["prod"]
+		capstoneSlug := l.Slug
+		if isMultiCapstone {
+			capstoneSlug += "-<student-id>"
+			entryARN = iamRoleARN(acctID, entryAcct, prefix, capstoneSlug, "carl")
+		}
+		targetARN = iamRoleARN(prodID, "prod", prefix, capstoneSlug, "mongo")
+		if prodID == "" {
+			prodID = "<prod-account-id>"
+		}
+		flagLocation = "s3://" + prefix + "-" + capstoneSlug + "-evidence-" + prodID + "/incident/flag.txt"
+	}
 
 	bodyRows := []string{
 		sectionLabel.Render("identities"),
@@ -896,32 +915,41 @@ func (m *Model) renderDetail(bodyH, contentW int) string {
 			hang("  "+detailKey.Render("victim "), detailVal.Render(prefix+"-"+l.Slug+"-bopca"), contentW))
 	}
 	bodyRows = append(bodyRows,
-		hang("  "+detailKey.Render("flag   "), detailVal.Render("/labs/"+prefix+"/"+l.Slug+"/flag"), contentW),
+		hang("  "+detailKey.Render("flag   "), detailVal.Render(flagLocation), contentW),
 		"")
 
-	// Start-of-lab. Prefer the ready-made profile (written to ~/.aws/config on
-	// apply); keep the manual assume-role command as a fallback. Session name
-	// defaults to the current OS user for CloudTrail attribution.
-	profileName := prefix + "-" + l.Slug + "-carl"
-	sess := awsconfig.CurrentSessionName()
-	bodyRows = append(bodyRows,
-		sectionLabel.Render("start — entry role"),
-		hang("  "+detailKey.Render("profile "), detailVal.Render(profileName), contentW),
-		"  "+dimAcct.Render("(added to ~/.aws/config on apply)"),
-		hang("  ", detailVal.Render("aws --profile "+profileName+" sts get-caller-identity"), contentW),
-		"",
-		"  "+dimAcct.Render("or assume it manually:"),
-	)
-	for _, cl := range []string{
-		"aws sts assume-role \\",
-		"  --role-arn " + entryARN + " \\",
-		"  --role-session-name " + sess + " \\",
-		"  --profile " + acct.Profile,
-	} {
-		// Continuation lines hang under the flag itself, keeping the two-space
-		// argument indent of the copyable command readable when it wraps.
-		indent := "  " + strings.Repeat(" ", len(cl)-len(strings.TrimLeft(cl, " ")))
-		bodyRows = append(bodyRows, hangHard(indent, detailVal.Render(strings.TrimLeft(cl, " ")), contentW))
+	if isMultiCapstone {
+		bodyRows = append(bodyRows,
+			sectionLabel.Render("start — IAM + CloudShell"),
+			hang("  "+detailKey.Render("students "), detailVal.Render(fmt.Sprintf("%d isolated console users", len(m.cfg.Capstone.Students))), contentW),
+			"  "+dimAcct.Render("issue printable cards after apply"),
+			hang("  ", detailVal.Render("so-aws-lab capstone access-cards"), contentW),
+			hang("  ", detailVal.Render("so-aws-lab capstone show"), contentW),
+		)
+	} else {
+		// Prefer the ready-made profile (written to ~/.aws/config on apply);
+		// keep the manual assume-role command as a fallback.
+		profileName := prefix + "-" + l.Slug + "-carl"
+		sess := awsconfig.CurrentSessionName()
+		bodyRows = append(bodyRows,
+			sectionLabel.Render("start — entry role"),
+			hang("  "+detailKey.Render("profile "), detailVal.Render(profileName), contentW),
+			"  "+dimAcct.Render("(added to ~/.aws/config on apply)"),
+			hang("  ", detailVal.Render("aws --profile "+profileName+" sts get-caller-identity"), contentW),
+			"",
+			"  "+dimAcct.Render("or assume it manually:"),
+		)
+		for _, cl := range []string{
+			"aws sts assume-role \\",
+			"  --role-arn " + entryARN + " \\",
+			"  --role-session-name " + sess + " \\",
+			"  --profile " + acct.Profile,
+		} {
+			// Continuation lines hang under the flag itself, keeping the two-space
+			// argument indent of the copyable command readable when it wraps.
+			indent := "  " + strings.Repeat(" ", len(cl)-len(strings.TrimLeft(cl, " ")))
+			bodyRows = append(bodyRows, hangHard(indent, detailVal.Render(strings.TrimLeft(cl, " ")), contentW))
+		}
 	}
 	if acctID == "" {
 		bodyRows = append(bodyRows, "  "+dimAcct.Render("(resolving account id…)"))
@@ -958,9 +986,13 @@ func (m *Model) renderDetail(bodyH, contentW int) string {
 	}
 	bodyRows = append(bodyRows, "  "+costStyle.Render(l.Cost))
 	if l.DailyUSD > 0 {
+		dailyEstimate := l.DailyUSD
+		if isMultiCapstone && len(m.cfg.Capstone.Students) > 1 {
+			dailyEstimate += float64(len(m.cfg.Capstone.Students)-1) * (2.0 / 30.0)
+		}
 		bodyRows = append(bodyRows,
 			"  "+detailKey.Render(fmt.Sprintf("approx. $%.2f/day  $%.2f/mo",
-				l.DailyUSD, l.DailyUSD*30)))
+				dailyEstimate, dailyEstimate*30)))
 	}
 	bodyRows = append(bodyRows, "")
 

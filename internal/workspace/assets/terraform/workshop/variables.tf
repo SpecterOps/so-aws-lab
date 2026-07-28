@@ -138,6 +138,23 @@ variable "enable_capstone" {
   default     = false
   description = "Capstone: 3-account, condition-gated privilege chain. Requires valid staging + prod profiles."
 }
+
+variable "capstone_students" {
+  type        = map(string)
+  default     = {}
+  description = "Optional map of short student ID to printable display label. Empty preserves single-student mode."
+
+  validation {
+    condition = length(var.capstone_students) <= 50 && alltrue([
+      for id, label in var.capstone_students :
+      id != "default" &&
+      can(regex("^[a-z0-9][a-z0-9-]{0,11}$", id)) &&
+      trimspace(label) != "" &&
+      length(label) <= 80
+    ])
+    error_message = "capstone_students accepts at most 50 entries; keys must be unique 1-12 character lowercase IDs (default is reserved), and each display label must contain 1-80 characters."
+  }
+}
 variable "enable_conditionresourcetag" {
   type    = bool
   default = false

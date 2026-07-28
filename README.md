@@ -43,7 +43,7 @@ Non-interactively:
 ```sh
 so-aws-lab enable putuserpolicy assumerole
 so-aws-lab apply
-so-aws-lab status    # entry-role / target-role / flag-param per lab
+so-aws-lab status    # entry / target / objective per lab
 so-aws-lab destroy
 ```
 
@@ -51,7 +51,7 @@ so-aws-lab destroy
 
 ```
 ~/.so-aws-lab/
-├── config.yaml               accounts, lab prefix, enabled set
+├── config.yaml               accounts, lab prefix, enabled set, capstone roster
 └── workspace/
     └── terraform/
         ├── modules/          shared module sources
@@ -65,15 +65,97 @@ ones are pruned, so edits there do not survive. `terraform.tfstate`, the
 ## AWS config profiles
 
 On `apply`, an entry-role profile is written into `~/.aws/config` for each
-enabled lab, inside `# >>> so-aws-lab managed:` sentinel blocks. Everything
-outside those blocks is preserved byte-for-byte, and `destroy` removes them.
-Reaching the *target* role is the exercise — only entry roles get a profile.
+enabled single-student lab, including the single-student capstone, inside
+`# >>> so-aws-lab managed:` sentinel blocks. Everything outside those blocks is
+preserved byte-for-byte, and `destroy` removes them. Reaching the *target* role
+is the exercise, so only entry roles get a profile. For example, the capstone
+starts with:
+
+```sh
+aws --profile <prefix>-capstone-carl sts get-caller-identity
+```
+
+## Multi-student capstone
+
+The `workshop/multi-user-capstone` branch adds an optional in-person workshop
+mode. The `main` branch keeps the original self-deployed, single-student
+behavior.
+
+Workshop mode deploys isolated capstone chains for multiple students in the
+same dev, staging, and prod accounts. Configure the three account deployment
+profiles with `so-aws-lab init`, then replace the capstone roster. A value
+after `=` is an optional display label for the printed card:
+
+```sh
+so-aws-lab capstone configure \
+  student01="Alice" \
+  student02="Bob"
+
+so-aws-lab enable capstone
+so-aws-lab apply
+so-aws-lab status
+so-aws-lab capstone access-cards
+```
+
+Terraform creates one console-only IAM bootstrap user per roster entry in dev.
+It creates no access keys. Each user has a permissions boundary and matching
+inline policy that allow only the CloudShell control-plane actions,
+`sts:GetCallerIdentity`, and `sts:AssumeRole` on that student's exact
+`<prefix>-capstone-<student-id>-carl` role. Carl's trust policy names that
+student's bootstrap user directly.
+
+`access-cards` creates or rotates the console login profiles through the AWS
+CLI and writes a self-contained printable HTML file to
+`~/.so-aws-lab/capstone-access-cards.html`. The file is mode `0600` and
+contains active passwords, so do not commit or share the complete sheet.
+Passwords never enter Terraform state or terminal output. Running the command
+again rotates every password and invalidates older cards.
+
+Each card contains the student ID, IAM username, temporary workshop password,
+AWS account sign-in link, and a prefilled Carl role-switch link. After signing
+in and switching to Carl, the student opens AWS CloudShell. CloudShell provides
+the AWS CLI, `jq`, `kubectl`, Python, and ZIP tooling needed by the capstone
+without local AWS credentials.
+
+The prod EKS cluster, its VPC and node group, and the staging EC2 outpost and
+VPC are shared. The node group scales with the configured roster. The mutable
+or inexpensive parts of the path are per student:
+
+- IAM roles, boundaries, and inline policies
+- Lambda gate, CloudFormation stack, and relay
+- fixed SSM credential-handoff document and SecureString parameters
+- both KMS keys and aliases
+- EKS namespace, access-entry target, Pod Identity association, and Mongo role
+- S3 evidence bucket, encrypted flag object, and baseline bucket policy
+
+The shared EC2 role issues a tagged Katia session through a parameterless
+student-specific SSM document; Mordecai cannot run `AWS-RunShellScript`.
+Tagged sessions can read and assume only the matching student's resources.
+EKS access-policy conditions force Odette to associate
+`AmazonEKSAdminPolicy` with the student's namespace only. Pod Security
+`restricted`, a `LimitRange`, and a `ResourceQuota` prevent privileged pods,
+load balancers, NodePorts, or unbounded compute use from affecting the shared
+cluster.
+
+To return to the original resource names and local managed profile:
+
+```sh
+so-aws-lab capstone configure --single-user
+```
+
+Apply that change before issuing cards. Removing a student from the roster and
+applying deletes that student's bootstrap user and login profile. Disabling
+the capstone and applying, or running `so-aws-lab destroy`, removes all
+workshop users. Terraform's `force_destroy` is limited to these capstone-owned
+bootstrap users.
 
 ## Cost
 
-Most labs are free, buts all labs that provision billable infrastructure
+Most labs are free, but all labs that provision billable infrastructure
 carry a `cost`/`daily_usd` field in `internal/labs/labs.yaml` and are marked in
-the TUI. Run `so-aws-lab destroy` when you're done.
+the TUI. Multi-student mode shares EKS and EC2 but adds two KMS keys per
+student (about $0.07/day per roster entry, before request charges). Run
+`so-aws-lab destroy` when you're done.
 
 ## Build from source
 
