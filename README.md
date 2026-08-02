@@ -172,7 +172,7 @@ student (about $0.07/day per roster entry, before request charges). Run
 
 ```sh
 make build      # -> bin/so-aws-lab
-make install    # -> $GOBIN/so-aws-lab
+make install    # -> $GOBIN/so-aws-lab, or ~/.local/bin/so-aws-lab when GOBIN is unset
 make test
 ```
 

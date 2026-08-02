@@ -1,4 +1,8 @@
 BIN := bin/so-aws-lab
+GOBIN ?= $(shell go env GOBIN)
+ifeq ($(strip $(GOBIN)),)
+GOBIN := $(HOME)/.local/bin
+endif
 
 .PHONY: help build install run test fmt tidy third-party clean
 
@@ -9,8 +13,9 @@ help: ## Show this help
 build: ## Compile the so-aws-lab binary to bin/so-aws-lab
 	go build -o $(BIN) ./cmd/so-aws-lab
 
-install: ## go install so-aws-lab onto your PATH (GOBIN)
-	go install ./cmd/so-aws-lab
+install: ## Install so-aws-lab into GOBIN (default: ~/.local/bin)
+	mkdir -p $(GOBIN)
+	GOBIN=$(GOBIN) go install ./cmd/so-aws-lab
 
 run: build ## Rebuild, then launch the TUI
 	./$(BIN)

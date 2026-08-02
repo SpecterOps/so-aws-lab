@@ -9,6 +9,7 @@ import (
 	"github.com/muesli/reflow/ansi"
 	"github.com/muesli/termenv"
 
+	"github.com/specterops/so-aws-lab/internal/config"
 	"github.com/specterops/so-aws-lab/internal/labs"
 )
 
@@ -162,5 +163,61 @@ func TestRenderBannerCollapses(t *testing.T) {
 	}
 	if n := strings.Count(renderBanner(70), "\n"); n != 1 {
 		t.Errorf("narrow terminal should stack onto two lines, got %d newlines", n)
+	}
+}
+
+func TestRenderCapstoneDetailUsesManagedEntryRole(t *testing.T) {
+	cfg := &config.Config{
+		LabPrefix: "aws-lab",
+		Accounts: map[string]config.Account{
+			"dev":     {Profile: "dev", Region: "us-east-1"},
+			"staging": {Profile: "staging", Region: "us-east-1"},
+			"prod":    {Profile: "prod", Region: "us-east-1"},
+		},
+		Enabled: map[string]bool{"capstone": true},
+	}
+	capstone := labs.Lab{
+		Slug:     "capstone",
+		Title:    "Capstone",
+		Category: "Capstone",
+		Accounts: []string{"dev", "staging", "prod"},
+	}
+	m := New(cfg, []labs.Lab{capstone}, false)
+	m.accountIDs = map[string]string{
+		"dev":     "111122223333",
+		"staging": "222233334444",
+		"prod":    "333344445555",
+	}
+	for i, it := range m.items {
+		if !it.isHdr && it.lab.Slug == "capstone" {
+			m.cursor = i
+			break
+		}
+	}
+
+	got := plainOf(m.renderDetail(40, 100))
+	for _, want := range []string{
+		"arn:aws:iam::111122223333:role/aws-lab-capstone-carl",
+		"arn:aws:iam::333344445555:role/aws-lab-capstone-mongo",
+		"s3://aws-lab-capstone-evidence-333344445555/incident/flag.txt",
+		"start — entry role",
+		"profile aws-lab-capstone-carl",
+		"added to ~/.aws/config on apply",
+		"aws --profile aws-lab-capstone-carl sts get-caller-identity",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("capstone detail is missing %q:\n%s", want, got)
+		}
+	}
+	for _, bypass := range []string{
+		"arn:aws:iam::111122223333:user/aws-lab-capstone-carl",
+		"start — IAM user",
+		"capstone_dev_deployer_access_key_id",
+		"capstone_dev_deployer_secret_access_key",
+		"<capstone-student>",
+	} {
+		if strings.Contains(got, bypass) {
+			t.Errorf("capstone detail advertises obsolete IAM-user entry %q:\n%s", bypass, got)
+		}
 	}
 }
