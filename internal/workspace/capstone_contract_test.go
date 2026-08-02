@@ -147,6 +147,25 @@ func TestCapstoneEntryIsBoundaryConstrainedRole(t *testing.T) {
 	}
 }
 
+func TestCapstoneBridgeSessionTagIsLocallyDiscoverable(t *testing.T) {
+	capstone := readAsset(t, "assets/terraform/workshop/capstone.tf")
+	start := strings.Index(capstone, `resource "aws_iam_policy" "capstone_entry_boundary"`)
+	end := strings.Index(capstone, `resource "aws_iam_role_policy" "capstone_entry_inline"`)
+	if start < 0 || end <= start {
+		t.Fatal("capstone Donut boundary could not be isolated")
+	}
+	boundary := capstone[start:end]
+	for _, required := range []string{
+		`Sid      = "AssumeStagingBridgeWithSessionTag"`,
+		`"aws:RequestTag/team" = "red"`,
+		`"aws:TagKeys" = ["team"]`,
+	} {
+		if !strings.Contains(boundary, required) {
+			t.Errorf("capstone Donut boundary does not expose %s", required)
+		}
+	}
+}
+
 func TestCapstoneMultiStudentIsolationContract(t *testing.T) {
 	capstone := readAsset(t, "assets/terraform/workshop/capstone.tf")
 	variables := readAsset(t, "assets/terraform/workshop/variables.tf")

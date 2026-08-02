@@ -347,6 +347,17 @@ resource "aws_iam_policy" "capstone_entry_boundary" {
         Effect   = "Allow"
         Action   = ["sts:AssumeRole", "sts:TagSession"]
         Resource = [each.value.bridge_role_arn]
+        # Signet lives in staging, so its trust policy cannot be read through
+        # Donut's dev-account IAM endpoint. Mirror the required session tag in
+        # Donut's own policy so the cross-account condition is discoverable.
+        Condition = {
+          StringEquals = {
+            "aws:RequestTag/team" = "red"
+          }
+          "ForAllValues:StringEquals" = {
+            "aws:TagKeys" = ["team"]
+          }
+        }
       },
       {
         Sid      = "SelfEnumeration"
