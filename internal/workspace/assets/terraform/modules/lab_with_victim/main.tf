@@ -27,7 +27,13 @@ variable "entry_boundary_statements" {
     Action   = list(string)
     Resource = list(string)
   }))
-  description = "Allow statements granted to the entry role. Resource must be a list."
+  description = "Allow statements in the entry-role boundary ceiling. Resource must be a list."
+}
+
+variable "entry_policy_statements" {
+  type        = list(any)
+  default     = null
+  description = "Optional initial identity policy for labs where a grant or resource policy supplies an operation."
 }
 
 variable "victim_extra_statements" {
@@ -40,6 +46,12 @@ variable "create_victim_access_key" {
   type        = bool
   default     = false
   description = "If true, also creates an aws_iam_access_key for the victim and outputs it. Currently always false; the entry-role inline policy can still be used to mint one via iam:CreateAccessKey if the boundary allows it."
+}
+
+variable "victim_initial_assume_target" {
+  type        = bool
+  default     = true
+  description = "Whether the victim starts with the identity-side target assumption grant. Disable when changing the victim policy is the lesson."
 }
 
 data "aws_caller_identity" "current" {}
@@ -79,6 +91,9 @@ module "base" {
   lab_name                  = var.lab_name
   flag_value                = var.flag_value
   entry_boundary_statements = var.entry_boundary_statements
+  entry_policy_statements   = var.entry_policy_statements
+  entry_target_access       = "none"
+  target_trusts_entry       = false
   extra_target_principals   = [local.victim_arn]
 }
 
@@ -113,8 +128,9 @@ resource "aws_iam_user" "victim" {
 }
 
 resource "aws_iam_user_policy" "victim_assume_target" {
-  name = "assume-lab-donut"
-  user = aws_iam_user.victim.name
+  count = var.victim_initial_assume_target ? 1 : 0
+  name  = "assume-lab-donut"
+  user  = aws_iam_user.victim.name
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{

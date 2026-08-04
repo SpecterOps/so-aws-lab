@@ -32,6 +32,11 @@ module "shared_eks" {
   lab_prefix = var.lab_prefix
   vpc_id     = module.shared_vpc[0].vpc_id
   subnet_ids = module.shared_vpc[0].subnet_ids
+
+  # Standalone EKS labs should not gain an unintended node-role path from a
+  # pod. Their intended AWS identities come from seeded Kubernetes data or Pod
+  # Identity.
+  protect_pod_imds = true
 }
 
 module "shared_ec2_targets" {

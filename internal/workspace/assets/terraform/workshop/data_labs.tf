@@ -49,6 +49,8 @@ module "lab_ssmsendcommand" {
   lab_name   = "ssmsendcommand"
   flag_value = var.flag_values["ssmsendcommand"]
 
+  entry_target_access = "none"
+  target_trusts_entry = false
   extra_target_principals = [
     "arn:${local.partition}:iam::${local.account_id}:role/${var.lab_prefix}-shared-ec2target",
   ]
@@ -220,6 +222,26 @@ module "lab_s3putbucketpolicy" {
       Resource = ["arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter/labs/${var.lab_prefix}/s3putbucketpolicy/bucket"]
     },
   ]
+
+  # The boundary permits a bucket-policy grant of GetObject, but Carl's
+  # identity policy does not grant it before the exercise.
+  entry_policy_statements = [
+    {
+      Sid    = "ManageBucketPolicy"
+      Effect = "Allow"
+      Action = ["s3:PutBucketPolicy", "s3:GetBucketPolicy", "s3:DeleteBucketPolicy", "s3:ListBucket"]
+      Resource = [
+        aws_s3_bucket.s3putbucketpolicy[0].arn,
+        "${aws_s3_bucket.s3putbucketpolicy[0].arn}/*",
+      ]
+    },
+    {
+      Sid      = "ReadBucketHint"
+      Effect   = "Allow"
+      Action   = ["ssm:GetParameter"]
+      Resource = ["arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter/labs/${var.lab_prefix}/s3putbucketpolicy/bucket"]
+    },
+  ]
 }
 
 resource "aws_ssm_parameter" "s3putbucketpolicy_bucket" {
@@ -358,7 +380,24 @@ module "lab_kmscreategrant" {
     {
       Sid      = "GrantThenDecrypt"
       Effect   = "Allow"
-      Action   = ["kms:CreateGrant", "kms:Decrypt", "kms:DescribeKey", "kms:ListGrants"]
+      Action   = ["kms:CreateGrant", "kms:Decrypt", "kms:DescribeKey", "kms:ListGrants", "kms:RevokeGrant"]
+      Resource = [aws_kms_key.kmscreategrant[0].arn]
+    },
+  ]
+
+  # Decrypt is in the boundary ceiling but absent from the identity policy.
+  # The exercise's KMS grant is the authorization that supplies it.
+  entry_policy_statements = [
+    {
+      Sid      = "ReadCiphertext"
+      Effect   = "Allow"
+      Action   = ["ssm:GetParameter"]
+      Resource = ["arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter/labs/${var.lab_prefix}/kmscreategrant/ciphertext"]
+    },
+    {
+      Sid      = "ManageGrant"
+      Effect   = "Allow"
+      Action   = ["kms:CreateGrant", "kms:DescribeKey", "kms:ListGrants", "kms:RevokeGrant"]
       Resource = [aws_kms_key.kmscreategrant[0].arn]
     },
   ]

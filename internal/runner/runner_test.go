@@ -75,3 +75,46 @@ func TestExistingCapstoneEKSVarArgsRequiresConnectionData(t *testing.T) {
 		t.Fatal("expected missing EKS connection data to fail")
 	}
 }
+
+func TestIsIAMRoleARN(t *testing.T) {
+	for _, tt := range []struct {
+		arn  string
+		want bool
+	}{
+		{arn: "arn:aws:iam::111122223333:role/so-aws-lab-carl", want: true},
+		{arn: "arn:aws-us-gov:iam::111122223333:role/path/so-aws-lab-carl", want: true},
+		{arn: "arn:aws:iam::111122223333:user/so-aws-lab-conditionprincipaltag-carl", want: false},
+		{arn: "not-an-arn", want: false},
+	} {
+		if got := isIAMRoleARN(tt.arn); got != tt.want {
+			t.Errorf("isIAMRoleARN(%q) = %t, want %t", tt.arn, got, tt.want)
+		}
+	}
+}
+
+func TestExistingStandaloneEKSVarArgs(t *testing.T) {
+	got, err := existingStandaloneEKSVarArgs([]byte(`{
+		"cluster": {
+			"name": "workshop-eks",
+			"endpoint": "https://standalone.eks.amazonaws.com",
+			"certificateAuthority": {"data": "Q0E="}
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"-var", "standalone_existing_eks_name=workshop-eks",
+		"-var", "standalone_existing_eks_endpoint=https://standalone.eks.amazonaws.com",
+		"-var", "standalone_existing_eks_ca=Q0E=",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("existing standalone EKS args\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestExistingStandaloneEKSVarArgsRequiresConnectionData(t *testing.T) {
+	if _, err := existingStandaloneEKSVarArgs([]byte(`{"cluster":{"name":"workshop-eks"}}`)); err == nil {
+		t.Fatal("expected missing standalone EKS connection data to fail")
+	}
+}

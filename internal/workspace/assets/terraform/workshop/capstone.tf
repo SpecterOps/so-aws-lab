@@ -1294,7 +1294,7 @@ locals {
   # bucket, while the KMS key carries the same value in its Student tag.
   capstone_mongo_required_principal_tags = {
     StringEquals = {
-      "aws:PrincipalTag/eks-cluster-name" = module.capstone_prod_eks[0].cluster_name
+      "aws:PrincipalTag/eks-cluster-name" = try(module.capstone_prod_eks[0].cluster_name, "disabled")
     }
     StringLike = {
       "aws:PrincipalTag/kubernetes-namespace"       = length(var.capstone_students) == 0 ? "incident-response" : "incident-response-*"

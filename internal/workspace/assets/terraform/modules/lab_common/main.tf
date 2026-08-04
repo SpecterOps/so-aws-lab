@@ -30,13 +30,36 @@ variable "entry_boundary_statements" {
     Action   = list(string)
     Resource = list(string)
   }))
-  description = "Allow statements for the entry-role boundary AND the entry-role inline policy. Resource must be a list — wrap a single value in []. Wrap a wildcard as [\"*\"]."
+  description = "Allow statements for the entry-role boundary. Resource must be a list; wrap a single value in []. Wrap a wildcard as [\"*\"]."
+}
+
+variable "entry_policy_statements" {
+  type        = list(any)
+  default     = null
+  description = "Optional initial identity-policy statements. Null preserves the legacy behavior of copying entry_boundary_statements. Use an explicit list when a resource policy, grant, or later mutation must add effective permission."
+}
+
+variable "entry_target_access" {
+  type        = string
+  default     = "none"
+  description = "Initial entry-role access to the target: direct, ceiling-only, or none."
+
+  validation {
+    condition     = contains(["direct", "ceiling-only", "none"], var.entry_target_access)
+    error_message = "entry_target_access must be direct, ceiling-only, or none."
+  }
+}
+
+variable "target_trusts_entry" {
+  type        = bool
+  default     = false
+  description = "Whether the target trust policy names the entry role. Disable for victim and service-mediated paths."
 }
 
 variable "extra_target_principals" {
   type        = list(string)
   default     = []
-  description = "Additional principal ARNs allowed to assume the lab's target role (in addition to the lab entry role, which is always permitted)."
+  description = "Additional principal ARNs allowed to assume the lab's target role."
 }
 
 variable "target_extra_statements" {
@@ -57,14 +80,18 @@ locals {
   entry_arn       = "arn:${local.partition}:iam::${local.account_id}:role/${var.lab_prefix}-${var.lab_name}-carl"
   target_arn      = "arn:${local.partition}:iam::${local.account_id}:role/${var.lab_prefix}-${var.lab_name}-donut"
 
-  # Always-allowed statements on the entry boundary + inline.
-  always_allow = [
-    {
-      Sid      = "AssumeLabTarget"
-      Effect   = "Allow"
-      Action   = ["sts:AssumeRole"]
-      Resource = [local.target_arn]
-    },
+  target_assume = {
+    Sid      = "AssumeLabTarget"
+    Effect   = "Allow"
+    Action   = ["sts:AssumeRole"]
+    Resource = [local.target_arn]
+  }
+
+  target_ceiling  = var.entry_target_access == "none" ? [] : [local.target_assume]
+  target_identity = var.entry_target_access == "direct" ? [local.target_assume] : []
+
+  # Statements shared by the entry boundary and initial inline policy.
+  common_allow = [
     {
       Sid      = "Identity"
       Effect   = "Allow"
@@ -106,17 +133,21 @@ locals {
     },
   ]
 
-  # Collect every action so the Deny NotAction is correct.
+  initial_statements = var.entry_policy_statements == null ? var.entry_boundary_statements : var.entry_policy_statements
+
+  # Collect every ceiling action so the Deny NotAction is correct.
   allowed_actions = distinct(flatten(concat(
     [for s in var.entry_boundary_statements : s.Action],
-    [for s in local.always_allow : s.Action],
+    [for s in local.target_ceiling : s.Action],
+    [for s in local.common_allow : s.Action],
   )))
 
   entry_policy_doc = jsonencode({
     Version = "2012-10-17"
     Statement = concat(
-      var.entry_boundary_statements,
-      local.always_allow,
+      local.initial_statements,
+      local.target_identity,
+      local.common_allow,
     )
   })
 }
@@ -144,7 +175,8 @@ resource "aws_iam_policy" "entry_boundary" {
     Version = "2012-10-17"
     Statement = concat(
       var.entry_boundary_statements,
-      local.always_allow,
+      local.target_ceiling,
+      local.common_allow,
       [
         {
           Sid       = "DenyAllOther"
@@ -211,7 +243,7 @@ resource "aws_iam_role" "target" {
         Action = "sts:AssumeRole"
         Condition = {
           ArnEquals = {
-            "aws:PrincipalArn" = concat([local.entry_arn], var.extra_target_principals)
+            "aws:PrincipalArn" = concat(var.target_trusts_entry ? [local.entry_arn] : [], var.extra_target_principals)
           }
         }
       },

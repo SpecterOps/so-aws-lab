@@ -44,6 +44,38 @@ resource "aws_eks_access_entry" "eksaccessentry_starter" {
   type          = "STANDARD"
 }
 
+resource "kubernetes_namespace_v1" "eksaccessentry_prod" {
+  count    = var.enable_eksaccessentry ? 1 : 0
+  provider = kubernetes.dev
+
+  metadata {
+    name = "prod"
+    labels = {
+      lab = "eksaccessentry"
+    }
+  }
+
+  depends_on = [module.shared_eks]
+}
+
+resource "kubernetes_secret_v1" "eksaccessentry_db_credentials" {
+  count    = var.enable_eksaccessentry ? 1 : 0
+  provider = kubernetes.dev
+
+  metadata {
+    name      = "db-credentials"
+    namespace = kubernetes_namespace_v1.eksaccessentry_prod[0].metadata[0].name
+    labels = {
+      lab = "eksaccessentry"
+    }
+  }
+
+  data = {
+    AccessKeyId     = aws_iam_access_key.eksaccessentry_victim[0].id
+    SecretAccessKey = aws_iam_access_key.eksaccessentry_victim[0].secret
+  }
+}
+
 # --- ekspodidentityassociation ----------------------------------------------
 
 resource "aws_iam_role" "ekspodidentityassociation_pod" {
@@ -81,6 +113,8 @@ module "lab_ekspodidentityassociation" {
   lab_name   = "ekspodidentityassociation"
   flag_value = var.flag_values["ekspodidentityassociation"]
 
+  entry_target_access     = "none"
+  target_trusts_entry     = false
   extra_target_principals = [aws_iam_role.ekspodidentityassociation_pod[0].arn]
 
   entry_boundary_statements = [
@@ -118,4 +152,33 @@ resource "aws_eks_access_entry" "ekspodidentityassociation_starter" {
   cluster_name  = module.shared_eks[0].cluster_name
   principal_arn = module.lab_ekspodidentityassociation[0].entry_role_arn
   type          = "STANDARD"
+}
+
+resource "kubernetes_namespace_v1" "ekspodidentityassociation_lab" {
+  count    = var.enable_ekspodidentityassociation ? 1 : 0
+  provider = kubernetes.dev
+
+  metadata {
+    name = "lab"
+    labels = {
+      lab = "ekspodidentityassociation"
+    }
+  }
+
+  depends_on = [module.shared_eks]
+}
+
+resource "aws_eks_access_policy_association" "ekspodidentityassociation_namespace_admin" {
+  count = var.enable_ekspodidentityassociation ? 1 : 0
+
+  cluster_name  = module.shared_eks[0].cluster_name
+  principal_arn = module.lab_ekspodidentityassociation[0].entry_role_arn
+  policy_arn    = "arn:${local.partition}:eks::aws:cluster-access-policy/AmazonEKSAdminPolicy"
+
+  access_scope {
+    type       = "namespace"
+    namespaces = [kubernetes_namespace_v1.ekspodidentityassociation_lab[0].metadata[0].name]
+  }
+
+  depends_on = [aws_eks_access_entry.ekspodidentityassociation_starter]
 }

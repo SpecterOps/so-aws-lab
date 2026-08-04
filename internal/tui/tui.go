@@ -881,14 +881,18 @@ func (m *Model) renderDetail(bodyH, contentW int) string {
 		"",
 	}
 
-	// Every lab starts from a managed entry-role profile. The capstone keeps its
-	// prod Mongo target and S3 objective while using the same entry-role flow.
+	// Most labs start from a managed entry-role profile. PrincipalTag is the
+	// standalone IAM-user exception.
 	isCapstone := l.Slug == "capstone"
 	isMultiCapstone := isCapstone && len(m.cfg.Capstone.Students) > 0
+	isIAMUserEntry := l.Slug == "conditionprincipaltag"
 	entryAcct := labAccounts(l)[0]
 	acct := m.cfg.AccountOr(entryAcct)
 	acctID := m.accountIDs[entryAcct]
 	entryARN := iamRoleARN(acctID, entryAcct, prefix, l.Slug, "carl")
+	if isIAMUserEntry {
+		entryARN = iamUserARN(acctID, entryAcct, prefix, l.Slug, "carl")
+	}
 	targetARN := iamRoleARN(acctID, entryAcct, prefix, l.Slug, "donut")
 	flagLocation := "/labs/" + prefix + "/" + l.Slug + "/flag"
 	if isCapstone {
@@ -925,6 +929,12 @@ func (m *Model) renderDetail(bodyH, contentW int) string {
 			"  "+dimAcct.Render("issue printable cards after apply"),
 			hang("  ", detailVal.Render("so-aws-lab capstone access-cards"), contentW),
 			hang("  ", detailVal.Render("so-aws-lab capstone show"), contentW),
+		)
+	} else if isIAMUserEntry {
+		bodyRows = append(bodyRows,
+			sectionLabel.Render("start - IAM user"),
+			hang("  ", detailVal.Render("use the generated access-key outputs shown in the lab walkthrough"), contentW),
+			"  "+dimAcct.Render("no managed role profile is written for this lab"),
 		)
 	} else {
 		// Prefer the ready-made profile (written to ~/.aws/config on apply);
@@ -1175,6 +1185,14 @@ func iamRoleARN(accountID, accountName, prefix, slug, kind string) string {
 		id = "<" + accountName + "-account-id>"
 	}
 	return fmt.Sprintf("arn:aws:iam::%s:role/%s-%s-%s", id, prefix, slug, kind)
+}
+
+func iamUserARN(accountID, accountName, prefix, slug, kind string) string {
+	id := accountID
+	if id == "" {
+		id = "<" + accountName + "-account-id>"
+	}
+	return fmt.Sprintf("arn:aws:iam::%s:user/%s-%s-%s", id, prefix, slug, kind)
 }
 
 // Run starts the TUI program. verbose seeds the initial verbose toggle.

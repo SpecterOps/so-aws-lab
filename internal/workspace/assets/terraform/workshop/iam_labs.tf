@@ -26,6 +26,9 @@ module "lab_createpolicyversion" {
   lab_name   = "createpolicyversion"
   flag_value = var.flag_values["createpolicyversion"]
 
+  entry_target_access = "ceiling-only"
+  target_trusts_entry = true
+
   entry_boundary_statements = [
     {
       Sid      = "IamRead"
@@ -42,6 +45,12 @@ module "lab_createpolicyversion" {
   ]
 }
 
+resource "aws_iam_role_policy_attachment" "createpolicyversion_pivot" {
+  count      = var.enable_createpolicyversion ? 1 : 0
+  role       = module.lab_createpolicyversion[0].entry_role_name
+  policy_arn = aws_iam_policy.createpolicyversion_pivot[0].arn
+}
+
 # --- 2. assumerole ------------------------------------------------------------
 
 module "lab_assumerole" {
@@ -50,6 +59,9 @@ module "lab_assumerole" {
   lab_prefix = var.lab_prefix
   lab_name   = "assumerole"
   flag_value = var.flag_values["assumerole"]
+
+  entry_target_access = "direct"
+  target_trusts_entry = true
 
   entry_boundary_statements = [
     {
@@ -69,6 +81,8 @@ module "lab_putuserpolicy" {
   lab_prefix = var.lab_prefix
   lab_name   = "putuserpolicy"
   flag_value = var.flag_values["putuserpolicy"]
+
+  victim_initial_assume_target = false
 
   entry_boundary_statements = [
     {
@@ -109,6 +123,9 @@ module "lab_attachrolepolicy" {
   lab_prefix = var.lab_prefix
   lab_name   = "attachrolepolicy"
   flag_value = var.flag_values["attachrolepolicy"]
+
+  entry_target_access = "ceiling-only"
+  target_trusts_entry = true
 
   entry_boundary_statements = [
     {

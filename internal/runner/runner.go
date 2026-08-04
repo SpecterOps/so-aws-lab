@@ -184,6 +184,56 @@ func existingCapstoneEKSVarArgs(raw []byte) ([]string, error) {
 	}, nil
 }
 
+// existingStandaloneEKSArgs discovers the dev cluster before disabling the
+// last standalone EKS lab. Terraform needs the live connection long enough to
+// remove its seeded namespaces and secrets before deleting the EKS module.
+func (r *Runner) existingStandaloneEKSArgs() ([]string, error) {
+	dev := r.Cfg.Primary()
+	clusterName := fmt.Sprintf("%s-eks", r.Cfg.LabPrefix)
+	cmd := exec.Command(
+		"aws", "eks", "describe-cluster",
+		"--name", clusterName,
+		"--profile", dev.Profile,
+		"--region", dev.Region,
+		"--output", "json",
+		"--no-cli-pager",
+	)
+	cmd.Env = append(os.Environ(),
+		"AWS_PROFILE="+dev.Profile,
+		"AWS_REGION="+dev.Region,
+		"AWS_DEFAULT_REGION="+dev.Region,
+	)
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Run(); err != nil {
+		message := strings.TrimSpace(output.String())
+		if strings.Contains(message, "ResourceNotFoundException") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("describe existing standalone EKS cluster %s: %w: %s", clusterName, err, message)
+	}
+
+	return existingStandaloneEKSVarArgs(output.Bytes())
+}
+
+func existingStandaloneEKSVarArgs(raw []byte) ([]string, error) {
+	var description eksDescription
+	if err := json.Unmarshal(raw, &description); err != nil {
+		return nil, fmt.Errorf("decode existing standalone EKS cluster: %w", err)
+	}
+	if description.Cluster.Name == "" ||
+		description.Cluster.Endpoint == "" ||
+		description.Cluster.CertificateAuthority.Data == "" {
+		return nil, fmt.Errorf("existing standalone EKS cluster response is missing connection data")
+	}
+	return []string{
+		"-var", "standalone_existing_eks_name=" + description.Cluster.Name,
+		"-var", "standalone_existing_eks_endpoint=" + description.Cluster.Endpoint,
+		"-var", "standalone_existing_eks_ca=" + description.Cluster.CertificateAuthority.Data,
+	}, nil
+}
+
 func (r *Runner) tfCmd(args ...string) *exec.Cmd {
 	dev := r.Cfg.Primary()
 	c := exec.Command("terraform", args...)
@@ -322,6 +372,13 @@ func (r *Runner) Apply() error {
 		}
 		tfvars = append(tfvars, existingEKS...)
 	}
+	if !r.Cfg.Enabled["eksaccessentry"] && !r.Cfg.Enabled["ekspodidentityassociation"] {
+		existingEKS, err := r.existingStandaloneEKSArgs()
+		if err != nil {
+			return err
+		}
+		tfvars = append(tfvars, existingEKS...)
+	}
 	args := append([]string{"apply", "-auto-approve", "-parallelism=10"}, tfvars...)
 	if err := r.tfCmd(args...).Run(); err != nil {
 		if r.shouldReconfigure() {
@@ -376,6 +433,9 @@ func (r *Runner) buildEntryProfiles() ([]awsconfig.Profile, error) {
 		if st == nil || st.EntryRoleARN == "" {
 			continue
 		}
+		if !isIAMRoleARN(st.EntryRoleARN) {
+			continue
+		}
 		srcProfile, srcRegion := dev.Profile, dev.Region
 		if acct := arnAccountID(st.EntryRoleARN); acct != "" {
 			for name, id := range accountIDs {
@@ -396,6 +456,11 @@ func (r *Runner) buildEntryProfiles() ([]awsconfig.Profile, error) {
 		})
 	}
 	return profs, nil
+}
+
+func isIAMRoleARN(arn string) bool {
+	parts := strings.SplitN(arn, ":", 6)
+	return len(parts) == 6 && parts[2] == "iam" && strings.HasPrefix(parts[5], "role/")
 }
 
 // arnAccountID pulls the 12-digit account ID out of an IAM role ARN
@@ -452,6 +517,11 @@ func (r *Runner) Destroy() error {
 		return err
 	}
 	args = append(args, existingEKS...)
+	existingStandaloneEKS, err := r.existingStandaloneEKSArgs()
+	if err != nil {
+		return err
+	}
+	args = append(args, existingStandaloneEKS...)
 	if err := r.tfCmd(args...).Run(); err != nil {
 		if r.shouldReconfigure() {
 			if err2 := r.reinitAndRetry(args); err2 == nil {

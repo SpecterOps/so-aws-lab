@@ -71,11 +71,12 @@ ones are pruned, so edits there do not survive. `terraform.tfstate`, the
 ## AWS config profiles
 
 On `apply`, an entry-role profile is written into `~/.aws/config` for each
-enabled single-student lab, including the single-student capstone, inside
+enabled role-based single-student lab, including the single-student capstone, inside
 `# >>> so-aws-lab managed:` sentinel blocks. Everything outside those blocks is
 preserved byte-for-byte, and `destroy` removes them. Reaching the *target* role
-is the exercise, so only entry roles get a profile. For example, the capstone
-starts with:
+is the exercise, so only entry roles get a profile. The PrincipalTag lab starts
+as an IAM user and intentionally receives no role-assuming profile. For
+example, the capstone starts with:
 
 ```sh
 aws --profile <prefix>-capstone-carl sts get-caller-identity

@@ -115,21 +115,21 @@ labs:
   - slug: cloudformationcreatestack
     title: CloudFormation CreateStack + PassRole
     category: CloudFormation
-    technique: Submit a stack using the lab's CFN service role to leak the flag
+    technique: Submit a stack using the lab's CFN service role to resolve a protected flag into a readable resource
     has_victim: false
-    services: [cloudformation, iam]
-    cost: "free"
-    daily_usd: 0.0
+    services: [cloudformation, iam, secretsmanager, ssm]
+    cost: "~$0.01/day while enabled (Secrets Manager)"
+    daily_usd: 0.014
     accounts: [dev]
 
   - slug: cloudformationcreatechangeset
     title: CloudFormation CreateChangeSet
     category: CloudFormation
-    technique: Change-set the pre-deployed stack via the privileged service role
+    technique: Change-set the pre-deployed stack to resolve a protected flag via its privileged service role
     has_victim: false
-    services: [cloudformation, iam]
-    cost: "free"
-    daily_usd: 0.0
+    services: [cloudformation, iam, secretsmanager, ssm]
+    cost: "~$0.01/day while enabled (Secrets Manager)"
+    daily_usd: 0.014
     accounts: [dev]
 
   - slug: ssmgetparameter

@@ -47,13 +47,15 @@ module "lab_ec2runinstances" {
   lab_name   = "ec2runinstances"
   flag_value = var.flag_values["ec2runinstances"]
 
+  entry_target_access     = "none"
+  target_trusts_entry     = false
   extra_target_principals = [aws_iam_role.ec2runinstances_privileged[0].arn]
 
   entry_boundary_statements = [
     {
       Sid      = "EnumerateEc2"
       Effect   = "Allow"
-      Action   = ["ec2:Describe*", "iam:Get*", "iam:List*", "iam:GetInstanceProfile"]
+      Action   = ["ec2:Describe*", "ec2:GetConsoleOutput", "iam:Get*", "iam:List*", "iam:GetInstanceProfile"]
       Resource = ["*"]
     },
     {
@@ -80,6 +82,8 @@ module "lab_ec2modifyuserdata" {
   lab_name   = "ec2modifyuserdata"
   flag_value = var.flag_values["ec2modifyuserdata"]
 
+  entry_target_access = "none"
+  target_trusts_entry = false
   extra_target_principals = [
     "arn:${local.partition}:iam::${local.account_id}:role/${var.lab_prefix}-shared-ec2target",
   ]
@@ -88,7 +92,7 @@ module "lab_ec2modifyuserdata" {
     {
       Sid      = "EnumerateEc2"
       Effect   = "Allow"
-      Action   = ["ec2:Describe*"]
+      Action   = ["ec2:Describe*", "ec2:GetConsoleOutput"]
       Resource = ["*"]
     },
     {
@@ -157,6 +161,8 @@ module "lab_lambdacreatefunction" {
   lab_name   = "lambdacreatefunction"
   flag_value = var.flag_values["lambdacreatefunction"]
 
+  entry_target_access     = "none"
+  target_trusts_entry     = false
   extra_target_principals = [aws_iam_role.lambdacreatefunction_service[0].arn]
 
   entry_boundary_statements = [
@@ -247,6 +253,8 @@ module "lab_lambdaupdatefunctioncode" {
   lab_name   = "lambdaupdatefunctioncode"
   flag_value = var.flag_values["lambdaupdatefunctioncode"]
 
+  entry_target_access     = "none"
+  target_trusts_entry     = false
   extra_target_principals = [aws_iam_role.lambdaupdatefunctioncode_service[0].arn]
 
   entry_boundary_statements = [
@@ -349,6 +357,8 @@ module "lab_lambdaupdatelayer" {
   lab_name   = "lambdaupdatelayer"
   flag_value = var.flag_values["lambdaupdatelayer"]
 
+  entry_target_access     = "none"
+  target_trusts_entry     = false
   extra_target_principals = [aws_iam_role.lambdaupdatelayer_service[0].arn]
 
   entry_boundary_statements = [
@@ -366,6 +376,7 @@ module "lab_lambdaupdatelayer" {
         "lambda:UpdateFunctionConfiguration",
         "lambda:InvokeFunction",
         "lambda:GetLayerVersion",
+        "lambda:DeleteLayerVersion",
       ]
       Resource = ["*"]
     },
@@ -373,6 +384,21 @@ module "lab_lambdaupdatelayer" {
 }
 
 # --- cloudformationcreatestack ------------------------------------------------
+
+resource "aws_secretsmanager_secret" "cloudformationcreatestack_source" {
+  count                   = var.enable_cloudformationcreatestack ? 1 : 0
+  name                    = "${var.lab_prefix}-cloudformationcreatestack-source"
+  description             = "Flag readable only through the cloudformationcreatestack service-role path."
+  recovery_window_in_days = 0
+
+  tags = { Lab = "cloudformationcreatestack", Kind = "service-role-source" }
+}
+
+resource "aws_secretsmanager_secret_version" "cloudformationcreatestack_source" {
+  count         = var.enable_cloudformationcreatestack ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.cloudformationcreatestack_source[0].id
+  secret_string = var.flag_values["cloudformationcreatestack"]
+}
 
 resource "aws_iam_role" "cloudformationcreatestack_service" {
   count = var.enable_cloudformationcreatestack ? 1 : 0
@@ -418,6 +444,11 @@ resource "aws_iam_role_policy" "cloudformationcreatestack_service_perms" {
         Action   = ["ssm:PutParameter", "ssm:DeleteParameter", "ssm:AddTagsToResource"]
         Resource = ["arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter/labs/${var.lab_prefix}/cloudformationcreatestack/leaked"]
       },
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [aws_secretsmanager_secret.cloudformationcreatestack_source[0].arn]
+      },
     ]
   })
 }
@@ -429,6 +460,8 @@ module "lab_cloudformationcreatestack" {
   lab_name   = "cloudformationcreatestack"
   flag_value = var.flag_values["cloudformationcreatestack"]
 
+  entry_target_access     = "none"
+  target_trusts_entry     = false
   extra_target_principals = [aws_iam_role.cloudformationcreatestack_service[0].arn]
 
   entry_boundary_statements = [
@@ -460,10 +493,31 @@ module "lab_cloudformationcreatestack" {
       Action   = ["ssm:GetParameter"]
       Resource = ["arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter/labs/${var.lab_prefix}/cloudformationcreatestack/leaked"]
     },
+    {
+      Sid      = "DiscoverSourceSecret"
+      Effect   = "Allow"
+      Action   = ["secretsmanager:ListSecrets", "secretsmanager:DescribeSecret"]
+      Resource = ["*"]
+    },
   ]
 }
 
 # --- cloudformationcreatechangeset --------------------------------------------
+
+resource "aws_secretsmanager_secret" "cloudformationcreatechangeset_source" {
+  count                   = var.enable_cloudformationcreatechangeset ? 1 : 0
+  name                    = "${var.lab_prefix}-cloudformationcreatechangeset-source"
+  description             = "Flag readable only through the cloudformationcreatechangeset service-role path."
+  recovery_window_in_days = 0
+
+  tags = { Lab = "cloudformationcreatechangeset", Kind = "service-role-source" }
+}
+
+resource "aws_secretsmanager_secret_version" "cloudformationcreatechangeset_source" {
+  count         = var.enable_cloudformationcreatechangeset ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.cloudformationcreatechangeset_source[0].id
+  secret_string = var.flag_values["cloudformationcreatechangeset"]
+}
 
 resource "aws_iam_role" "cloudformationcreatechangeset_service" {
   count = var.enable_cloudformationcreatechangeset ? 1 : 0
@@ -505,9 +559,16 @@ resource "aws_iam_role_policy" "cloudformationcreatechangeset_service_perms" {
         }
       },
       {
+        Effect = "Allow"
+        Action = ["ssm:PutParameter", "ssm:DeleteParameter", "ssm:AddTagsToResource"]
+        Resource = [
+          "arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter/labs/${var.lab_prefix}/cloudformationcreatechangeset/leaked",
+        ]
+      },
+      {
         Effect   = "Allow"
-        Action   = ["ssm:PutParameter", "ssm:DeleteParameter", "ssm:AddTagsToResource"]
-        Resource = ["arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter/labs/${var.lab_prefix}/cloudformationcreatechangeset/leaked"]
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [aws_secretsmanager_secret.cloudformationcreatechangeset_source[0].arn]
       },
     ]
   })
@@ -543,6 +604,8 @@ module "lab_cloudformationcreatechangeset" {
   lab_name   = "cloudformationcreatechangeset"
   flag_value = var.flag_values["cloudformationcreatechangeset"]
 
+  entry_target_access     = "none"
+  target_trusts_entry     = false
   extra_target_principals = [aws_iam_role.cloudformationcreatechangeset_service[0].arn]
 
   entry_boundary_statements = [
@@ -572,6 +635,12 @@ module "lab_cloudformationcreatechangeset" {
       Effect   = "Allow"
       Action   = ["ssm:GetParameter"]
       Resource = ["arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter/labs/${var.lab_prefix}/cloudformationcreatechangeset/leaked"]
+    },
+    {
+      Sid      = "DiscoverSourceSecret"
+      Effect   = "Allow"
+      Action   = ["secretsmanager:ListSecrets", "secretsmanager:DescribeSecret"]
+      Resource = ["*"]
     },
   ]
 }
