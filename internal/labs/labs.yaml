@@ -257,7 +257,7 @@ labs:
   - slug: capstone
     title: "Capstone — Cross-Account Conditional Chain"
     category: Capstone
-    technique: "3-account, 10-edge remix of Lambda, AssumeRole, CloudFormation, fixed-document SSM, EC2, namespace-scoped EKS Pod Identity, S3 policy, KMS grants, and conditional authorization"
+    technique: "3-account, 9-edge graph with a source-IP-gated fixed-document SSM prerequisite, namespace-scoped EKS Pod Identity, S3 policy, KMS grants, and conditional authorization"
     has_victim: false
     services: [iam, sts, lambda, cloudformation, ssm, kms, ec2, eks, s3]
     cost: "~$4.72/day for one student; shared EKS + EC2 and about $0.07/day per additional student's two KMS CMKs"

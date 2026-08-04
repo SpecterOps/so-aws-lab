@@ -32,7 +32,7 @@ type Account struct {
 
 // CapstoneConfig controls the optional workshop-scale deployment. Students maps
 // a short, stable lab ID to the label printed on that student's access card.
-// An empty map preserves the original single-student deployment.
+// The empty default always selects the original single-user deployment.
 type CapstoneConfig struct {
 	Students map[string]string `yaml:"students,omitempty"`
 }

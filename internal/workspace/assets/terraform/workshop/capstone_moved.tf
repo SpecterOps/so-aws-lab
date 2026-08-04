@@ -98,8 +98,8 @@ moved {
 }
 
 moved {
-  from = aws_iam_role.capstone_prod_pod_role[0]
-  to   = aws_iam_role.capstone_prod_pod_role["default"]
+  from = aws_iam_role.capstone_prod_pod_role["default"]
+  to   = aws_iam_role.capstone_prod_pod_role[0]
 }
 
 moved {
@@ -143,6 +143,6 @@ moved {
 }
 
 moved {
-  from = aws_iam_role_policy.capstone_prod_pod_inline[0]
-  to   = aws_iam_role_policy.capstone_prod_pod_inline["default"]
+  from = aws_iam_role_policy.capstone_prod_pod_inline["default"]
+  to   = aws_iam_role_policy.capstone_prod_pod_inline[0]
 }

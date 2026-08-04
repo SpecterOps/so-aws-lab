@@ -145,7 +145,7 @@ output "labs" {
     }, null)
     capstone = length(var.capstone_students) == 0 ? try({
       entry_role_arn      = aws_iam_role.capstone_dev_deployer["default"].arn
-      target_role_arn     = aws_iam_role.capstone_prod_pod_role["default"].arn
+      target_role_arn     = aws_iam_role.capstone_prod_pod_role[0].arn
       flag_parameter_name = "s3://${aws_s3_bucket.capstone_evidence["default"].bucket}/${aws_s3_object.capstone_flag["default"].key}"
     }, null) : null
     conditionresourcetag = try({
@@ -222,7 +222,7 @@ output "capstone_prod_bridge_role_arn" {
 }
 
 output "capstone_pod_role_arn" {
-  value = try(aws_iam_role.capstone_prod_pod_role["default"].arn, null)
+  value = try(aws_iam_role.capstone_prod_pod_role[0].arn, null)
 }
 
 output "capstone_eks_cluster_name" {
@@ -252,18 +252,19 @@ output "capstone_students" {
       )
       console_signin_url      = id == "default" ? null : "https://${local.account_id}.signin.aws.amazon.com/console/"
       entry_role_arn          = aws_iam_role.capstone_dev_deployer[id].arn
-      target_role_arn         = aws_iam_role.capstone_prod_pod_role[id].arn
+      target_role_arn         = aws_iam_role.capstone_prod_pod_role[0].arn
       bootstrap_function_name = aws_lambda_function.capstone_bootstrap_fn[id].function_name
       bridge_role_arn         = aws_iam_role.capstone_bridge[id].arn
       workflow_stack_name     = aws_cloudformation_stack.capstone_workflow[id].name
       deployer_role_arn       = aws_iam_role.capstone_deployer[id].arn
       relay_function_name     = instance.relay_name
       jumpbox_id              = aws_instance.capstone_jumpbox[0].id
+      katia_role_arn          = aws_iam_role.capstone_katia[id].arn
       handoff_document_name   = aws_ssm_document.capstone_credential_handoff[id].name
       credential_parameter    = aws_ssm_parameter.capstone_katia_credentials[id].name
       external_id_parameter   = aws_ssm_parameter.capstone_external_id[id].name
       prod_bridge_role_arn    = aws_iam_role.capstone_prod_reader[id].arn
-      pod_role_arn            = aws_iam_role.capstone_prod_pod_role[id].arn
+      pod_role_arn            = aws_iam_role.capstone_prod_pod_role[0].arn
       eks_cluster_name        = module.capstone_prod_eks[0].cluster_name
       kubernetes_namespace    = instance.namespace
       flag_bucket_name        = aws_s3_bucket.capstone_evidence[id].bucket

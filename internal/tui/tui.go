@@ -898,7 +898,7 @@ func (m *Model) renderDetail(bodyH, contentW int) string {
 			capstoneSlug += "-<student-id>"
 			entryARN = iamRoleARN(acctID, entryAcct, prefix, capstoneSlug, "carl")
 		}
-		targetARN = iamRoleARN(prodID, "prod", prefix, capstoneSlug, "mongo")
+		targetARN = iamRoleARN(prodID, "prod", prefix, l.Slug, "mongo")
 		if prodID == "" {
 			prodID = "<prod-account-id>"
 		}

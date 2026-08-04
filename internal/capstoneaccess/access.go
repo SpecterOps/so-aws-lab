@@ -5,7 +5,6 @@ package capstoneaccess
 import (
 	"bytes"
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -17,8 +16,15 @@ import (
 	"sort"
 	"strings"
 	"time"
+)
 
-	qrcode "github.com/skip2/go-qrcode"
+// Shared read-only BloodHound instance handed to every attendee. The same
+// credential appears on every card by design: the instance is pre-loaded with
+// GoAWSHound data for the capstone accounts and grants no AWS access.
+const (
+	bloodhoundURL      = "https://bloodhound.stormchaser.cloud"
+	bloodhoundUser     = "demo"
+	bloodhoundPassword = "BHUSA2026demo!"
 )
 
 // Student describes one deployed workshop bootstrap identity. It contains no
@@ -53,14 +59,15 @@ type card struct {
 	Password      string
 	RoleName      string
 	SwitchRoleURL string
-	SigninQR      template.URL
-	SwitchRoleQR  template.URL
 }
 
 type cardPage struct {
-	GeneratedAt string
-	Region      string
-	Cards       []card
+	GeneratedAt        string
+	Region             string
+	BloodhoundURL      string
+	BloodhoundUser     string
+	BloodhoundPassword string
+	Cards              []card
 }
 
 // Generate verifies all Terraform-managed IAM users, creates or rotates their
@@ -117,14 +124,6 @@ func Generate(profile, region, outputPath string, students []Student) (Result, e
 			return Result{}, err
 		}
 		switchURL := switchRoleURL(student.EntryRoleARN, roleName)
-		signinQR, err := qrDataURL(student.ConsoleSigninURL)
-		if err != nil {
-			return Result{}, fmt.Errorf("encode sign-in QR for %s: %w", student.ID, err)
-		}
-		switchQR, err := qrDataURL(switchURL)
-		if err != nil {
-			return Result{}, fmt.Errorf("encode switch-role QR for %s: %w", student.ID, err)
-		}
 		if student.Label == "" {
 			student.Label = student.ID
 		}
@@ -133,15 +132,16 @@ func Generate(profile, region, outputPath string, students []Student) (Result, e
 			Password:      password,
 			RoleName:      roleName,
 			SwitchRoleURL: switchURL,
-			SigninQR:      signinQR,
-			SwitchRoleQR:  switchQR,
 		})
 	}
 
 	path, err := writeCards(preparedOutput, cardPage{
-		GeneratedAt: time.Now().Format(time.RFC3339),
-		Region:      region,
-		Cards:       cards,
+		GeneratedAt:        time.Now().Format(time.RFC3339),
+		Region:             region,
+		BloodhoundURL:      bloodhoundURL,
+		BloodhoundUser:     bloodhoundUser,
+		BloodhoundPassword: bloodhoundPassword,
+		Cards:              cards,
 	})
 	if err != nil {
 		return Result{}, err
@@ -237,14 +237,6 @@ func switchRoleURL(roleARN, name string) string {
 	q.Set("roleName", name)
 	u.RawQuery = q.Encode()
 	return u.String()
-}
-
-func qrDataURL(value string) (template.URL, error) {
-	png, err := qrcode.Encode(value, qrcode.Medium, 180)
-	if err != nil {
-		return "", err
-	}
-	return template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(png)), nil
 }
 
 func generatePassword() (string, error) {
@@ -357,9 +349,9 @@ var accessCardTemplate = template.Must(template.New("cards").Parse(`<!doctype ht
   code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
   a { color: inherit; }
   .password code { font-size: 16px; font-weight: bold; }
-  .qrs { display: grid; grid-template-columns: 1fr 1fr; gap: .08in; margin-top: .12in; text-align: center; }
-  .qrs img { width: 1.2in; height: 1.2in; image-rendering: pixelated; }
-  .qrs div { font-size: 11px; font-weight: bold; }
+  .bloodhound { margin-top: .12in; border: 1px solid #111827; border-radius: 6px; padding: .08in .1in; background: #f9fafb; }
+  .bloodhound h3 { margin: 0 0 .04in; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .bloodhound .field { margin: .04in 0; }
   ol { margin: .12in 0 0 .2in; padding: 0; font-size: 11px; line-height: 1.35; }
   .footer { margin-top: .12in; border-top: 1px solid #d1d5db; padding-top: .08in; font-size: 9px; color: #4b5563; }
   @media print {
@@ -384,13 +376,15 @@ var accessCardTemplate = template.Must(template.New("cards").Parse(`<!doctype ht
   <div class="field"><span>Student ID</span><code>{{.ID}}</code></div>
   <div class="field"><span>IAM username</span><code>{{.UserName}}</code></div>
   <div class="field password"><span>Workshop password</span><code>{{.Password}}</code></div>
-  <div class="qrs">
-    <div><img alt="AWS console sign-in QR" src="{{.SigninQR}}"><br>1. Sign in</div>
-    <div><img alt="Carl role-switch QR" src="{{.SwitchRoleQR}}"><br>2. Switch to Carl</div>
+  <div class="bloodhound">
+    <h3>BloodHound (read-only, shared)</h3>
+    <div class="field"><span>URL</span><a href="{{$.BloodhoundURL}}"><code>{{$.BloodhoundURL}}</code></a></div>
+    <div class="field"><span>Username</span><code>{{$.BloodhoundUser}}</code></div>
+    <div class="field"><span>Password</span><code>{{$.BloodhoundPassword}}</code></div>
   </div>
   <ol>
-    <li>Open or scan the sign-in URL and enter the username and password above.</li>
-    <li>Open or scan the role-switch URL. It is prefilled for <code>{{.RoleName}}</code>.</li>
+    <li>Open the sign-in URL below and enter the username and password above.</li>
+    <li>Open the role-switch URL below. It is prefilled for <code>{{.RoleName}}</code>.</li>
     <li>Choose <strong>Switch Role</strong>, then open AWS CloudShell in <code>{{$.Region}}</code>.</li>
     <li>Run <code>aws sts get-caller-identity</code>. The ARN must contain <code>assumed-role/{{.RoleName}}/</code>.</li>
   </ol>

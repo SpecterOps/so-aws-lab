@@ -17,6 +17,9 @@ func TestLoadDefaultsCapstoneRoster(t *testing.T) {
 	if cfg.Capstone.Students == nil {
 		t.Fatal("capstone students map is nil")
 	}
+	if len(cfg.Capstone.Students) != 0 {
+		t.Fatalf("default capstone roster has %d users, want single-user mode", len(cfg.Capstone.Students))
+	}
 }
 
 func TestCapstoneConfigRoundTrip(t *testing.T) {

@@ -35,6 +35,20 @@ func TestTFVarsArgsIncludesCapstoneRoster(t *testing.T) {
 	}
 }
 
+func TestTFVarsArgsDefaultsCapstoneToSingleUser(t *testing.T) {
+	r := &Runner{Cfg: &config.Config{
+		Accounts: map[string]config.Account{},
+		Enabled:  map[string]bool{"capstone": true},
+		Capstone: config.CapstoneConfig{
+			Students: map[string]string{},
+		},
+	}}
+
+	if !slices.Contains(r.tfvarsArgs(), `capstone_students={}`) {
+		t.Fatalf("default capstone deployment did not pass an empty roster: %#v", r.tfvarsArgs())
+	}
+}
+
 func TestExistingCapstoneEKSVarArgs(t *testing.T) {
 	got, err := existingCapstoneEKSVarArgs([]byte(`{
 		"cluster": {

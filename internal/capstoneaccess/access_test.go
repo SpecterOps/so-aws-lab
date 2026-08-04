@@ -2,7 +2,6 @@ package capstoneaccess
 
 import (
 	"encoding/json"
-	"html/template"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -53,8 +52,11 @@ func TestRoleNameAndSwitchURL(t *testing.T) {
 func TestWriteCardsIsPrivateAndEscapesLabels(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cards.html")
 	got, err := writeCards(path, cardPage{
-		GeneratedAt: "2026-07-27T12:00:00Z",
-		Region:      "us-east-1",
+		GeneratedAt:        "2026-07-27T12:00:00Z",
+		Region:             "us-east-1",
+		BloodhoundURL:      "https://bloodhound.example.com",
+		BloodhoundUser:     "workshop",
+		BloodhoundPassword: "Graph-pass-42!",
 		Cards: []card{{
 			Student: Student{
 				ID:               "student01",
@@ -66,8 +68,6 @@ func TestWriteCardsIsPrivateAndEscapesLabels(t *testing.T) {
 			Password:      "Amber-river-cobalt-mango-42!",
 			RoleName:      "workshop-capstone-student01-carl",
 			SwitchRoleURL: "https://signin.aws.amazon.com/switchrole?account=111122223333&roleName=workshop-capstone-student01-carl",
-			SigninQR:      template.URL("data:image/png;base64,AA=="),
-			SwitchRoleQR:  template.URL("data:image/png;base64,AA=="),
 		}},
 	})
 	if err != nil {
@@ -96,11 +96,15 @@ func TestWriteCardsIsPrivateAndEscapesLabels(t *testing.T) {
 		"Amber-river-cobalt-mango-42!",
 		"workshop-capstone-student01-carl",
 		"open AWS CloudShell in <code>us-east-1</code>",
-		`src="data:image/png;base64,AA=="`,
+		"https://bloodhound.example.com",
+		"Graph-pass-42!",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("card HTML is missing %q", want)
 		}
+	}
+	if strings.Contains(html, "data:image/png;base64,") {
+		t.Error("card HTML still embeds a QR code image")
 	}
 }
 

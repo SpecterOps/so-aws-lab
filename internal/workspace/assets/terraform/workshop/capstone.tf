@@ -9,8 +9,7 @@
 # AWS_CanAssumeRole
 # AWS_CanExecuteCloudFormationChangeSet
 # AWS_RunsAs
-# AWS_SSMCanSendCommand
-# AWS_RunsAs
+# AWS_CanAssumeRole
 # AWS_CanAssumeRole
 # AWS_CanCreateAndAssociateEKSAccessEntry
 # AWS_CanAssumeRoleViaPodIdentity
@@ -23,16 +22,21 @@
 #             gate-golem (Lambda)
 #               -> runs as Donut
 #             Donut (role)
-#               -> assume Signet with a required session tag
+#               -> assume Signet
 #   [staging] Signet (role)
 #               -> change-set an existing role-bearing stack
 #             workflow stack
 #               -> runs as Mordecai through its relay Lambda
 #             Mordecai (role)
-#               -> SendCommand to the managed outpost
+#               -> write its short-lived credentials into the private handoff
+#                  and run only its fixed SSM document on the managed outpost
 #             outpost (EC2)
-#               -> runs as Katia
-#             Katia (role)
+#               -> runs as Ward
+#               -> replays Mordecai's credentials from the outpost EIP and
+#                  obtains Katia credentials for the relay
+#             Mordecai's replayed session
+#               -> assumes only the student's Katia role
+#             Katia (per-student role)
 #               -> read a CMK-protected ExternalId and assume Odette
 #   [prod]    Odette (role)
 #               -> create and associate its own EKS access entry
@@ -42,8 +46,9 @@
 #               -> repair a narrow S3 bucket policy, create a constrained KMS
 #                  grant, and read the encrypted flag object
 #
-# The SSM/KMS handoff and S3/KMS objective are required substeps, not graph
-# transitions. Their relationship kinds are intentionally not part of the path.
+# The source-IP-gated SSM handoff, KMS handoff, and S3/KMS objective are required
+# operational substeps, not graph transitions. Their relationship kinds are
+# intentionally not part of the path.
 
 locals {
   capstone_enabled = var.enable_capstone ? 1 : 0
@@ -59,13 +64,14 @@ locals {
     for id, label in local.capstone_student_roster :
     id => id == "default" ? local.capstone_prefix : "${local.capstone_prefix}-${id}"
   }
+  capstone_shared_mongo_role_arn = "arn:${local.partition}:iam::${local.prod_account_id}:role/${local.capstone_prefix}-mongo"
   capstone_instances = var.enable_capstone ? {
     for id, label in local.capstone_student_roster : id => {
       id                  = id
       student_label       = label
       prefix              = local.capstone_student_prefixes[id]
       namespace           = id == "default" ? "incident-response" : "incident-response-${id}"
-      service_account     = "evidence-reader"
+      service_account     = local.capstone_student_prefixes[id]
       external_id_param   = "/labs/${var.lab_prefix}/capstone/${id}/prod-external-id"
       credential_param    = "/labs/${var.lab_prefix}/capstone/${id}/katia-credentials"
       relay_name          = "${local.capstone_student_prefixes[id]}-relay"
@@ -77,8 +83,9 @@ locals {
       entry_role_arn       = "arn:${local.partition}:iam::${local.account_id}:role/${local.capstone_student_prefixes[id]}-donut"
       bridge_role_arn      = "arn:${local.partition}:iam::${local.staging_account_id}:role/${local.capstone_student_prefixes[id]}-signet"
       cfn_role_arn         = "arn:${local.partition}:iam::${local.staging_account_id}:role/${local.capstone_student_prefixes[id]}-mordecai"
+      katia_role_arn       = "arn:${local.partition}:iam::${local.staging_account_id}:role/${local.capstone_student_prefixes[id]}-katia"
       prod_bridge_role_arn = "arn:${local.partition}:iam::${local.prod_account_id}:role/${local.capstone_student_prefixes[id]}-odette"
-      pod_role_arn         = "arn:${local.partition}:iam::${local.prod_account_id}:role/${local.capstone_student_prefixes[id]}-mongo"
+      pod_role_arn         = local.capstone_shared_mongo_role_arn
       relay_arn            = "arn:${local.partition}:lambda:${local.staging_region}:${local.staging_account_id}:function:${local.capstone_student_prefixes[id]}-relay"
       external_param_arn   = "arn:${local.partition}:ssm:${local.staging_region}:${local.staging_account_id}:parameter/labs/${var.lab_prefix}/capstone/${id}/prod-external-id"
       credential_param_arn = "arn:${local.partition}:ssm:${local.staging_region}:${local.staging_account_id}:parameter/labs/${var.lab_prefix}/capstone/${id}/katia-credentials"
@@ -112,9 +119,9 @@ locals {
   capstone_staging_account_root = "arn:${local.partition}:iam::${local.staging_account_id}:root"
   capstone_prod_account_root    = "arn:${local.partition}:iam::${local.prod_account_id}:root"
 
-  # The shared outpost role is re-assumed by a fixed, per-student SSM document.
-  # The resulting session tag selects only that student's downstream resources.
-  capstone_ec2_role_arn = "arn:${local.partition}:iam::${local.staging_account_id}:role/${local.capstone_prefix}-katia"
+  # The shared outpost has no downstream student privileges. Each fixed SSM
+  # document assumes a persistent, per-student Katia role instead.
+  capstone_ec2_role_arn = "arn:${local.partition}:iam::${local.staging_account_id}:role/${local.capstone_prefix}-ward"
 
   capstone_self_enum_actions = [
     "iam:Get*",
@@ -200,6 +207,10 @@ resource "aws_iam_user_policy" "capstone_student_bootstrap" {
 }
 
 resource "random_uuid" "capstone_prod_external_id" {
+  for_each = local.capstone_instances
+}
+
+resource "random_uuid" "capstone_katia_external_id" {
   for_each = local.capstone_instances
 }
 
@@ -343,21 +354,10 @@ resource "aws_iam_policy" "capstone_entry_boundary" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "AssumeStagingBridgeWithSessionTag"
+        Sid      = "AssumeStagingBridge"
         Effect   = "Allow"
-        Action   = ["sts:AssumeRole", "sts:TagSession"]
+        Action   = ["sts:AssumeRole"]
         Resource = [each.value.bridge_role_arn]
-        # Signet lives in staging, so its trust policy cannot be read through
-        # Donut's dev-account IAM endpoint. Mirror the required session tag in
-        # Donut's own policy so the cross-account condition is discoverable.
-        Condition = {
-          StringEquals = {
-            "aws:RequestTag/team" = "red"
-          }
-          "ForAllValues:StringEquals" = {
-            "aws:TagKeys" = ["team"]
-          }
-        }
       },
       {
         Sid      = "SelfEnumeration"
@@ -434,10 +434,9 @@ resource "aws_iam_role" "capstone_bridge" {
       {
         Effect    = "Allow"
         Principal = { AWS = aws_iam_role.capstone_entry[each.key].arn }
-        Action    = ["sts:AssumeRole", "sts:TagSession"]
+        Action    = ["sts:AssumeRole"]
         Condition = {
           StringEquals = {
-            "aws:RequestTag/team"  = "red"
             "aws:PrincipalAccount" = local.account_id
           }
         }
@@ -529,7 +528,7 @@ resource "aws_iam_role" "capstone_ec2_role" {
   count    = local.capstone_enabled
   provider = aws.staging
 
-  name = "${local.capstone_prefix}-katia"
+  name = "${local.capstone_prefix}-ward"
   path = "/"
 
   assume_role_policy = jsonencode({
@@ -541,23 +540,12 @@ resource "aws_iam_role" "capstone_ec2_role" {
         Principal = { Service = local.capstone_ec2_sp }
         Action    = "sts:AssumeRole"
       },
-      {
-        Sid       = "CreateStudentTaggedSession"
-        Effect    = "Allow"
-        Principal = { AWS = local.capstone_staging_account_root }
-        Action    = ["sts:AssumeRole", "sts:TagSession"]
-        Condition = {
-          ArnEquals = {
-            "aws:PrincipalArn" = local.capstone_ec2_role_arn
-          }
-        }
-      },
     ]
   })
 
   tags = {
     Lab  = "capstone"
-    Kind = "shared-ec2-instance"
+    Kind = "shared-ec2-runtime"
   }
 }
 
@@ -573,8 +561,47 @@ resource "aws_iam_instance_profile" "capstone_ec2" {
   count    = local.capstone_enabled
   provider = aws.staging
 
-  name = "${local.capstone_prefix}-katia"
+  name = "${local.capstone_prefix}-ward"
   role = aws_iam_role.capstone_ec2_role[0].name
+}
+
+# Student identity lives in these persistent IAM roles, so authorization tools
+# can evaluate one concrete Mordecai-to-Katia relationship per student. The
+# ExternalId is exercised only from the shared outpost's EIP by the fixed SSM
+# document; Ward itself has no permission to assume any Katia role.
+resource "aws_iam_role" "capstone_katia" {
+  for_each = local.capstone_instances
+  provider = aws.staging
+
+  name                 = "${each.value.prefix}-katia"
+  path                 = "/"
+  max_session_duration = 3600
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.capstone_deployer[each.key].arn }
+        Action    = "sts:AssumeRole"
+        Condition = {
+          StringEquals = {
+            "aws:PrincipalAccount" = local.staging_account_id
+            "sts:ExternalId"       = random_uuid.capstone_katia_external_id[each.key].result
+          }
+          IpAddress = {
+            "aws:SourceIp" = "${aws_eip.capstone_jumpbox[0].public_ip}/32"
+          }
+        }
+      },
+    ]
+  })
+
+  tags = {
+    Lab     = "capstone"
+    Kind    = "student-handoff"
+    Student = each.key
+  }
 }
 
 resource "aws_instance" "capstone_jumpbox" {
@@ -615,6 +642,27 @@ resource "aws_instance" "capstone_jumpbox" {
   depends_on = [aws_iam_role_policy_attachment.capstone_ec2_ssm_core]
 }
 
+resource "aws_eip" "capstone_jumpbox" {
+  count    = local.capstone_enabled
+  provider = aws.staging
+
+  domain = "vpc"
+
+  tags = {
+    Name = "${local.capstone_prefix}-outpost"
+    Lab  = "capstone"
+    Kind = "managed-outpost-source"
+  }
+}
+
+resource "aws_eip_association" "capstone_jumpbox" {
+  count    = local.capstone_enabled
+  provider = aws.staging
+
+  allocation_id = aws_eip.capstone_jumpbox[0].id
+  instance_id   = aws_instance.capstone_jumpbox[0].id
+}
+
 resource "aws_ssm_parameter" "capstone_katia_credentials" {
   for_each = local.capstone_instances
   provider = aws.staging
@@ -622,7 +670,7 @@ resource "aws_ssm_parameter" "capstone_katia_credentials" {
   name        = each.value.credential_param
   type        = "SecureString"
   value       = jsonencode({ status = "not-issued" })
-  description = "Short-lived Katia credentials issued by the fixed capstone handoff document."
+  description = "Private Mordecai-to-Katia credential handoff for the fixed capstone SSM document."
 
   tags = {
     Lab     = "capstone"
@@ -637,8 +685,9 @@ resource "aws_ssm_parameter" "capstone_katia_credentials" {
 
 # Students may run only their fixed document. It accepts no parameters, so
 # ssm:SendCommand cannot be converted into arbitrary root shell access on the
-# shared outpost. The document re-assumes Katia with a student session tag and
-# stores the temporary result in that student's private SecureString.
+# shared outpost. Mordecai first publishes its own short-lived credentials. The
+# document replays them only from the outpost's EIP, assumes that student's
+# persistent Katia role, and stores the result in the same private SecureString.
 resource "aws_ssm_document" "capstone_credential_handoff" {
   for_each = local.capstone_instances
   provider = aws.staging
@@ -648,7 +697,7 @@ resource "aws_ssm_document" "capstone_credential_handoff" {
   document_format = "JSON"
   content = jsonencode({
     schemaVersion = "2.2"
-    description   = "Issue an isolated Katia session for capstone student ${each.key}."
+    description   = "Issue isolated Katia role credentials for capstone student ${each.key}."
     mainSteps = [
       {
         action = "aws:runShellScript"
@@ -657,7 +706,11 @@ resource "aws_ssm_document" "capstone_credential_handoff" {
           timeoutSeconds = "60"
           runCommand = [
             "set -eu",
-            "CREDS=\"$(aws sts assume-role --role-arn '${local.capstone_ec2_role_arn}' --role-session-name 'capstone-${each.key}' --duration-seconds 3600 --tags 'Key=Student,Value=${each.key}' --query Credentials --output json)\"",
+            "umask 077",
+            "MORDECAI_FILE=/tmp/capstone-${each.key}-mordecai.ini",
+            "trap 'rm -f \"$MORDECAI_FILE\"' EXIT",
+            "aws ssm get-parameter --name '${each.value.credential_param}' --with-decryption --query Parameter.Value --output text > \"$MORDECAI_FILE\"",
+            "CREDS=\"$(env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN AWS_DEFAULT_REGION='${local.staging_region}' AWS_SHARED_CREDENTIALS_FILE=\"$MORDECAI_FILE\" AWS_PROFILE=default aws sts assume-role --role-arn '${each.value.katia_role_arn}' --role-session-name 'capstone-${each.key}' --external-id '${random_uuid.capstone_katia_external_id[each.key].result}' --duration-seconds 3600 --query Credentials --output json)\"",
             "aws ssm put-parameter --name '${each.value.credential_param}' --type SecureString --value \"$CREDS\" --overwrite >/dev/null",
             "echo '{\"status\":\"ready\",\"student\":\"${each.key}\"}'",
           ]
@@ -717,6 +770,18 @@ resource "aws_iam_role_policy" "capstone_deployer_inline" {
           aws_instance.capstone_jumpbox[0].arn,
           each.value.ssm_document_arn,
         ]
+      },
+      {
+        Sid      = "PublishOwnMordecaiCredentialHandoff"
+        Effect   = "Allow"
+        Action   = ["ssm:PutParameter"]
+        Resource = [each.value.credential_param_arn]
+      },
+      {
+        Sid      = "AssumeOwnKatiaAfterSSMHandoff"
+        Effect   = "Allow"
+        Action   = ["sts:AssumeRole"]
+        Resource = [each.value.katia_role_arn]
       },
       {
         Sid      = "ReadOwnKatiaCredentialHandoff"
@@ -900,14 +965,13 @@ resource "aws_kms_key" "capstone_prod_handoff" {
         Resource  = "*"
       },
       {
-        Sid       = "KatiaDecryptsOnlyThroughParameterStore"
+        Sid       = "StudentKatiaDecryptsOnlyThroughParameterStore"
         Effect    = "Allow"
-        Principal = { AWS = aws_iam_role.capstone_ec2_role[0].arn }
+        Principal = { AWS = aws_iam_role.capstone_katia[each.key].arn }
         Action    = ["kms:Decrypt", "kms:DescribeKey"]
         Resource  = "*"
         Condition = {
           StringEquals = {
-            "aws:PrincipalTag/Student"            = each.key
             "kms:ViaService"                      = "ssm.${local.staging_region}.amazonaws.com"
             "kms:EncryptionContext:PARAMETER_ARN" = each.value.external_param_arn
           }
@@ -949,64 +1013,54 @@ resource "aws_ssm_parameter" "capstone_external_id" {
 }
 
 locals {
-  # Keep the shared Katia policy well below IAM's role quota as the roster
-  # grows. Principal tag policy variables select the current student's paths
-  # and role at request time; the per-student KMS key and Odette trust policies
-  # independently enforce the same Student tag.
+  # Ward can publish the fixed documents' results but cannot assume any
+  # downstream role. The graph-visible AssumeRole permission belongs to each
+  # Mordecai and names only its own Katia.
   capstone_ec2_inline_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      {
-        Sid      = "CreateKnownStudentSessionFromUntaggedInstance"
-        Effect   = "Allow"
-        Action   = ["sts:AssumeRole", "sts:TagSession"]
-        Resource = [local.capstone_ec2_role_arn]
-        Condition = {
-          Null = {
-            "aws:PrincipalTag/Student" = "true"
-          }
-          StringEquals = {
-            "aws:RequestTag/Student" = keys(local.capstone_instances)
-          }
-          "ForAllValues:StringEquals" = {
-            "aws:TagKeys" = ["Student"]
-          }
-        }
-      },
       {
         Sid      = "PublishCredentialHandoffs"
         Effect   = "Allow"
         Action   = ["ssm:PutParameter"]
         Resource = ["arn:${local.partition}:ssm:${local.staging_region}:${local.staging_account_id}:parameter/labs/${var.lab_prefix}/capstone/*/katia-credentials"]
-        Condition = {
-          Null = {
-            "aws:PrincipalTag/Student" = "true"
-          }
-        }
       },
       {
-        # AmazonSSMManagedInstanceCore grants GetParameter broadly so the
-        # untagged EC2 runtime can operate. Once the role is re-assumed with a
-        # Student session tag, explicitly deny reads of every other student's
-        # tagged capstone parameters.
-        Sid    = "DenyTaggedSessionsReadingOtherStudentParameters"
-        Effect = "Deny"
-        Action = [
-          "ssm:GetParameter",
-          "ssm:GetParameterHistory",
-          "ssm:GetParameters",
-          "ssm:GetParametersByPath",
-        ]
-        Resource = ["arn:${local.partition}:ssm:${local.staging_region}:${local.staging_account_id}:parameter/labs/${var.lab_prefix}/capstone/*"]
-        Condition = {
-          Null = {
-            "aws:PrincipalTag/Student" = "false"
-          }
-          StringNotEquals = {
-            "aws:ResourceTag/Student" = "$${aws:PrincipalTag/Student}"
-          }
-        }
+        Sid      = "SelfEnumeration"
+        Effect   = "Allow"
+        Action   = local.capstone_self_enum_actions
+        Resource = ["*"]
       },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "capstone_ec2_inline" {
+  count    = local.capstone_enabled
+  provider = aws.staging
+
+  name   = "${local.capstone_prefix}-ward-policy"
+  role   = aws_iam_role.capstone_ec2_role[0].name
+  policy = local.capstone_ec2_inline_policy
+
+  lifecycle {
+    precondition {
+      condition     = length(local.capstone_ec2_inline_policy) <= 10240
+      error_message = "The shared Ward inline policy exceeds IAM's 10,240-character role policy quota."
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "capstone_katia_inline" {
+  for_each = local.capstone_instances
+  provider = aws.staging
+
+  name = "${each.value.prefix}-katia-policy"
+  role = aws_iam_role.capstone_katia[each.key].name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
       {
         Sid      = "SelfEnumeration"
         Effect   = "Allow"
@@ -1017,58 +1071,28 @@ locals {
         Sid      = "ReadOwnProdFederationToken"
         Effect   = "Allow"
         Action   = ["ssm:GetParameter", "ssm:GetParameters"]
-        Resource = ["arn:${local.partition}:ssm:${local.staging_region}:${local.staging_account_id}:parameter/labs/${var.lab_prefix}/capstone/$${aws:PrincipalTag/Student}/prod-external-id"]
-        Condition = {
-          StringEquals = {
-            "aws:PrincipalTag/Student" = keys(local.capstone_instances)
-          }
-        }
+        Resource = [each.value.external_param_arn]
       },
       {
         Sid      = "DecryptOwnTokenOnlyThroughParameterStore"
         Effect   = "Allow"
         Action   = ["kms:Decrypt"]
-        Resource = ["arn:${local.partition}:kms:${local.staging_region}:${local.staging_account_id}:key/*"]
+        Resource = [aws_kms_key.capstone_prod_handoff[each.key].arn]
         Condition = {
           StringEquals = {
-            "aws:PrincipalTag/Student"            = keys(local.capstone_instances)
             "kms:ViaService"                      = "ssm.${local.staging_region}.amazonaws.com"
-            "kms:EncryptionContext:PARAMETER_ARN" = "arn:${local.partition}:ssm:${local.staging_region}:${local.staging_account_id}:parameter/labs/${var.lab_prefix}/capstone/$${aws:PrincipalTag/Student}/prod-external-id"
+            "kms:EncryptionContext:PARAMETER_ARN" = each.value.external_param_arn
           }
         }
       },
       {
-        Sid    = "AssumeOwnProdIncidentBridge"
-        Effect = "Allow"
-        Action = ["sts:AssumeRole"]
-        Resource = [
-          "arn:${local.partition}:iam::${local.prod_account_id}:role/${local.capstone_prefix}-odette",
-          "arn:${local.partition}:iam::${local.prod_account_id}:role/${local.capstone_prefix}-$${aws:PrincipalTag/Student}-odette",
-        ]
-        Condition = {
-          StringEquals = {
-            "aws:PrincipalTag/Student" = keys(local.capstone_instances)
-          }
-        }
+        Sid      = "AssumeOwnProdIncidentBridge"
+        Effect   = "Allow"
+        Action   = ["sts:AssumeRole"]
+        Resource = [each.value.prod_bridge_role_arn]
       },
     ]
   })
-}
-
-resource "aws_iam_role_policy" "capstone_ec2_inline" {
-  count    = local.capstone_enabled
-  provider = aws.staging
-
-  name   = "${local.capstone_prefix}-katia-policy"
-  role   = aws_iam_role.capstone_ec2_role[0].name
-  policy = local.capstone_ec2_inline_policy
-
-  lifecycle {
-    precondition {
-      condition     = length(local.capstone_ec2_inline_policy) <= 10240
-      error_message = "The shared Katia inline policy exceeds IAM's 10,240-character role policy quota."
-    }
-  }
 }
 
 # ============================================================================
@@ -1183,13 +1207,12 @@ resource "aws_iam_role" "capstone_prod_reader" {
     Statement = [
       {
         Effect    = "Allow"
-        Principal = { AWS = aws_iam_role.capstone_ec2_role[0].arn }
+        Principal = { AWS = aws_iam_role.capstone_katia[each.key].arn }
         Action    = "sts:AssumeRole"
         Condition = {
           StringEquals = {
-            "aws:PrincipalAccount"     = local.staging_account_id
-            "aws:PrincipalTag/Student" = each.key
-            "sts:ExternalId"           = random_uuid.capstone_prod_external_id[each.key].result
+            "aws:PrincipalAccount" = local.staging_account_id
+            "sts:ExternalId"       = random_uuid.capstone_prod_external_id[each.key].result
           }
         }
       },
@@ -1265,12 +1288,116 @@ resource "aws_iam_role_policy" "capstone_prod_reader_inline" {
   })
 }
 
-resource "aws_iam_role" "capstone_prod_pod_role" {
-  for_each = local.capstone_instances
+locals {
+  # EKS Pod Identity adds these principal tags to every role session. The
+  # service-account value is also the stable prefix of that student's evidence
+  # bucket, while the KMS key carries the same value in its Student tag.
+  capstone_mongo_required_principal_tags = {
+    StringEquals = {
+      "aws:PrincipalTag/eks-cluster-name" = module.capstone_prod_eks[0].cluster_name
+    }
+    StringLike = {
+      "aws:PrincipalTag/kubernetes-namespace"       = length(var.capstone_students) == 0 ? "incident-response" : "incident-response-*"
+      "aws:PrincipalTag/kubernetes-service-account" = length(var.capstone_students) == 0 ? local.capstone_prefix : "${local.capstone_prefix}-*"
+    }
+  }
+  capstone_mongo_evidence_bucket_arn = "arn:${local.partition}:s3:::$${aws:PrincipalTag/kubernetes-service-account}-evidence-${local.prod_account_id}"
+}
+
+resource "aws_iam_policy" "capstone_prod_pod_boundary" {
+  count    = local.capstone_enabled
   provider = aws.prod
 
-  name = "${each.value.prefix}-mongo"
-  path = "/"
+  name        = "${local.capstone_prefix}-mongo-boundary"
+  path        = "/"
+  description = "Ceiling for tag-isolated capstone Pod Identity sessions."
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DiscoverEvidenceBuckets"
+        Effect    = "Allow"
+        Action    = ["s3:ListAllMyBuckets"]
+        Resource  = ["*"]
+        Condition = local.capstone_mongo_required_principal_tags
+      },
+      {
+        Sid    = "OwnEvidenceBucketCeiling"
+        Effect = "Allow"
+        Action = [
+          "s3:GetBucketLocation",
+          "s3:GetBucketPolicy",
+          "s3:GetEncryptionConfiguration",
+          "s3:GetObject",
+          "s3:ListBucket",
+          "s3:PutBucketPolicy",
+        ]
+        Resource = [
+          local.capstone_mongo_evidence_bucket_arn,
+          "${local.capstone_mongo_evidence_bucket_arn}/*",
+        ]
+        Condition = local.capstone_mongo_required_principal_tags
+      },
+      {
+        Sid    = "OwnEvidenceKeyCeiling"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:DescribeKey",
+          "kms:GetKeyPolicy",
+          "kms:ListGrants",
+          "kms:RetireGrant",
+          "kms:RevokeGrant",
+        ]
+        Resource = ["arn:${local.partition}:kms:${local.prod_region}:${local.prod_account_id}:key/*"]
+        Condition = {
+          StringEquals = merge(local.capstone_mongo_required_principal_tags.StringEquals, {
+            "aws:ResourceTag/Student" = "$${aws:PrincipalTag/kubernetes-service-account}"
+          })
+          StringLike = local.capstone_mongo_required_principal_tags.StringLike
+        }
+      },
+      {
+        Sid      = "OwnEvidenceDecryptGrantCeiling"
+        Effect   = "Allow"
+        Action   = ["kms:CreateGrant"]
+        Resource = ["arn:${local.partition}:kms:${local.prod_region}:${local.prod_account_id}:key/*"]
+        Condition = {
+          StringEquals = merge(local.capstone_mongo_required_principal_tags.StringEquals, {
+            "aws:ResourceTag/Student" = "$${aws:PrincipalTag/kubernetes-service-account}"
+            "kms:GranteePrincipal"    = local.capstone_shared_mongo_role_arn
+          })
+          StringLike = local.capstone_mongo_required_principal_tags.StringLike
+          "ForAllValues:StringEquals" = {
+            "kms:GrantOperations" = ["Decrypt"]
+          }
+        }
+      },
+      {
+        Sid    = "SelfEnumeration"
+        Effect = "Allow"
+        Action = [
+          "iam:Get*",
+          "iam:List*",
+          "iam:SimulateCustomPolicy",
+          "iam:SimulatePrincipalPolicy",
+          "sts:GetCallerIdentity",
+        ]
+        Resource  = ["*"]
+        Condition = local.capstone_mongo_required_principal_tags
+      },
+    ]
+  })
+}
+
+resource "aws_iam_role" "capstone_prod_pod_role" {
+  count    = local.capstone_enabled
+  provider = aws.prod
+
+  name                 = "${local.capstone_prefix}-mongo"
+  path                 = "/"
+  permissions_boundary = aws_iam_policy.capstone_prod_pod_boundary[0].arn
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -1285,9 +1412,8 @@ resource "aws_iam_role" "capstone_prod_pod_role" {
   })
 
   tags = {
-    Lab     = "capstone"
-    Kind    = "pod-identity"
-    Student = each.key
+    Lab  = "capstone"
+    Kind = "shared-pod-identity"
   }
 }
 
@@ -1298,7 +1424,7 @@ resource "aws_eks_pod_identity_association" "capstone_evidence_reader" {
   cluster_name    = module.capstone_prod_eks[0].cluster_name
   namespace       = each.value.namespace
   service_account = each.value.service_account
-  role_arn        = aws_iam_role.capstone_prod_pod_role[each.key].arn
+  role_arn        = aws_iam_role.capstone_prod_pod_role[0].arn
 
   depends_on = [
     module.capstone_prod_eks,
@@ -1330,19 +1456,29 @@ resource "aws_kms_key" "capstone_evidence" {
       {
         Sid       = "MongoCanInspectAndRevokeGrants"
         Effect    = "Allow"
-        Principal = { AWS = aws_iam_role.capstone_prod_pod_role[each.key].arn }
+        Principal = { AWS = aws_iam_role.capstone_prod_pod_role[0].arn }
         Action    = ["kms:DescribeKey", "kms:ListGrants", "kms:RevokeGrant", "kms:RetireGrant"]
         Resource  = "*"
+        Condition = {
+          StringEquals = {
+            "aws:PrincipalTag/eks-cluster-name"           = module.capstone_prod_eks[0].cluster_name
+            "aws:PrincipalTag/kubernetes-namespace"       = each.value.namespace
+            "aws:PrincipalTag/kubernetes-service-account" = each.value.service_account
+          }
+        }
       },
       {
         Sid       = "MongoCanCreateOnlyItsDecryptGrant"
         Effect    = "Allow"
-        Principal = { AWS = aws_iam_role.capstone_prod_pod_role[each.key].arn }
+        Principal = { AWS = aws_iam_role.capstone_prod_pod_role[0].arn }
         Action    = ["kms:CreateGrant"]
         Resource  = "*"
         Condition = {
           StringEquals = {
-            "kms:GranteePrincipal" = aws_iam_role.capstone_prod_pod_role[each.key].arn
+            "aws:PrincipalTag/eks-cluster-name"           = module.capstone_prod_eks[0].cluster_name
+            "aws:PrincipalTag/kubernetes-namespace"       = each.value.namespace
+            "aws:PrincipalTag/kubernetes-service-account" = each.value.service_account
+            "kms:GranteePrincipal"                        = local.capstone_shared_mongo_role_arn
           }
           "ForAllValues:StringEquals" = {
             "kms:GrantOperations" = ["Decrypt"]
@@ -1379,7 +1515,7 @@ resource "aws_kms_key" "capstone_evidence" {
   tags = {
     Lab     = "capstone"
     Kind    = "evidence"
-    Student = each.key
+    Student = each.value.service_account
   }
 }
 
@@ -1481,52 +1617,69 @@ resource "aws_s3_object" "capstone_flag" {
 }
 
 resource "aws_iam_role_policy" "capstone_prod_pod_inline" {
-  for_each = local.capstone_instances
+  count    = local.capstone_enabled
   provider = aws.prod
 
-  name = "${each.value.prefix}-mongo-policy"
-  role = aws_iam_role.capstone_prod_pod_role[each.key].name
+  name = "${local.capstone_prefix}-mongo-policy"
+  role = aws_iam_role.capstone_prod_pod_role[0].name
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "DiscoverEvidenceBuckets"
-        Effect   = "Allow"
-        Action   = ["s3:ListAllMyBuckets", "s3:GetBucketLocation"]
-        Resource = ["*"]
+        Sid       = "DiscoverEvidenceBuckets"
+        Effect    = "Allow"
+        Action    = ["s3:ListAllMyBuckets"]
+        Resource  = ["*"]
+        Condition = local.capstone_mongo_required_principal_tags
       },
       {
-        Sid      = "InspectAndRepairEvidencePolicy"
-        Effect   = "Allow"
-        Action   = ["s3:GetBucketPolicy", "s3:GetEncryptionConfiguration", "s3:ListBucket", "s3:PutBucketPolicy"]
-        Resource = [each.value.evidence_bucket_arn]
+        Sid       = "InspectAndRepairEvidencePolicy"
+        Effect    = "Allow"
+        Action    = ["s3:GetBucketLocation", "s3:GetBucketPolicy", "s3:GetEncryptionConfiguration", "s3:ListBucket", "s3:PutBucketPolicy"]
+        Resource  = [local.capstone_mongo_evidence_bucket_arn]
+        Condition = local.capstone_mongo_required_principal_tags
       },
       {
         Sid      = "InspectEvidenceKey"
         Effect   = "Allow"
         Action   = ["kms:DescribeKey", "kms:GetKeyPolicy", "kms:ListGrants", "kms:RevokeGrant", "kms:RetireGrant"]
-        Resource = [aws_kms_key.capstone_evidence[each.key].arn]
+        Resource = ["arn:${local.partition}:kms:${local.prod_region}:${local.prod_account_id}:key/*"]
+        Condition = {
+          StringEquals = merge(local.capstone_mongo_required_principal_tags.StringEquals, {
+            "aws:ResourceTag/Student" = "$${aws:PrincipalTag/kubernetes-service-account}"
+          })
+          StringLike = local.capstone_mongo_required_principal_tags.StringLike
+        }
       },
       {
         Sid      = "CreateOnlySelfDecryptGrant"
         Effect   = "Allow"
         Action   = ["kms:CreateGrant"]
-        Resource = [aws_kms_key.capstone_evidence[each.key].arn]
+        Resource = ["arn:${local.partition}:kms:${local.prod_region}:${local.prod_account_id}:key/*"]
         Condition = {
-          StringEquals = {
-            "kms:GranteePrincipal" = aws_iam_role.capstone_prod_pod_role[each.key].arn
-          }
+          StringEquals = merge(local.capstone_mongo_required_principal_tags.StringEquals, {
+            "aws:ResourceTag/Student" = "$${aws:PrincipalTag/kubernetes-service-account}"
+            "kms:GranteePrincipal"    = local.capstone_shared_mongo_role_arn
+          })
+          StringLike = local.capstone_mongo_required_principal_tags.StringLike
           "ForAllValues:StringEquals" = {
             "kms:GrantOperations" = ["Decrypt"]
           }
         }
       },
       {
-        Sid      = "SelfEnumeration"
-        Effect   = "Allow"
-        Action   = local.capstone_self_enum_actions
-        Resource = ["*"]
+        Sid    = "SelfEnumeration"
+        Effect = "Allow"
+        Action = [
+          "iam:Get*",
+          "iam:List*",
+          "iam:SimulateCustomPolicy",
+          "iam:SimulatePrincipalPolicy",
+          "sts:GetCallerIdentity",
+        ]
+        Resource  = ["*"]
+        Condition = local.capstone_mongo_required_principal_tags
       },
     ]
   })

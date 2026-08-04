@@ -77,9 +77,9 @@ aws --profile <prefix>-capstone-carl sts get-caller-identity
 
 ## Multi-student capstone
 
-The `workshop/multi-user-capstone` branch adds an optional in-person workshop
-mode. The `main` branch keeps the original self-deployed, single-student
-behavior.
+The capstone always defaults to the original self-deployed, single-user
+behavior. Multi-student workshop mode is opt-in: it is used only after an
+organizer configures a non-empty roster.
 
 Workshop mode deploys isolated capstone chains for multiple students in the
 same dev, staging, and prod accounts. Configure the three account deployment
@@ -97,6 +97,12 @@ labels:
 so-aws-lab capstone configure \
   student01="Alice" \
   student02="Bob"
+```
+
+Return to the default single-user deployment at any time:
+
+```sh
+so-aws-lab capstone configure --single-user
 ```
 
 Then deploy the configured roster and issue its access cards:
@@ -132,18 +138,23 @@ The prod EKS cluster, its VPC and node group, and the staging EC2 outpost and
 VPC are shared. The node group scales with the configured roster. The mutable
 or inexpensive parts of the path are per student:
 
-- IAM roles, boundaries, and inline policies
+- student-specific IAM roles, boundaries, and inline policies
 - Lambda gate, CloudFormation stack, and relay
 - fixed SSM credential-handoff document and SecureString parameters
 - both KMS keys and aliases
-- EKS namespace, access-entry target, Pod Identity association, and Mongo role
+- EKS namespace, access-entry target, and Pod Identity association
 - S3 evidence bucket, encrypted flag object, and baseline bucket policy
 
-The shared EC2 role issues a tagged Katia session through a parameterless
-student-specific SSM document; Mordecai cannot run `AWS-RunShellScript`.
-Tagged sessions can read and assume only the matching student's resources.
-EKS access-policy conditions force Odette to associate
-`AmazonEKSAdminPolicy` with the student's namespace only. Pod Security
+Mordecai writes its short-lived credentials to a private handoff and invokes a
+parameterless student-specific SSM document; it cannot run
+`AWS-RunShellScript`. The shared Ward role cannot assume any downstream role.
+The fixed document replays only that Mordecai session from the outpost's stable
+source IP to assume its matching Katia role. EKS access-policy conditions force
+Odette to associate `AmazonEKSAdminPolicy` with the student's namespace only.
+Every Pod Identity
+association points to one shared Mongo role. Its permissions boundary, inline
+policy, S3 resources, and KMS key policies use EKS-supplied cluster, namespace,
+and service-account session tags to keep runtimes isolated. Pod Security
 `restricted`, a `LimitRange`, and a `ResourceQuota` prevent privileged pods,
 load balancers, NodePorts, or unbounded compute use from affecting the shared
 cluster.
