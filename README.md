@@ -34,9 +34,15 @@ dependencies.
 ```sh
 so-aws-lab init      # wizard: AWS profiles per account, region, lab prefix
 so-aws-lab           # opens the TUI
+so-aws-lab --update  # install a newer release, if one is available
 ```
 
 In the TUI: `↑/↓` navigate, `space` toggle a lab, `a` apply, `q` quit.
+
+The update flag verifies the release checksum and replaces the running binary
+atomically. It refuses to update while Terraform state contains any deployed
+lab resources. Run `so-aws-lab destroy` before crossing an infrastructure
+version boundary.
 
 Non-interactively:
 

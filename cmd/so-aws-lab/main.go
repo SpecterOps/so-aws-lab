@@ -22,6 +22,7 @@ import (
 	"github.com/specterops/so-aws-lab/internal/labs"
 	"github.com/specterops/so-aws-lab/internal/runner"
 	"github.com/specterops/so-aws-lab/internal/tui"
+	"github.com/specterops/so-aws-lab/internal/updater"
 	"github.com/specterops/so-aws-lab/internal/workspace"
 )
 
@@ -34,15 +35,22 @@ var (
 )
 
 func main() {
+	var update bool
 	root := &cobra.Command{
 		Use:     "so-aws-lab",
 		Short:   "Self-hosted AWS privesc lab TUI",
 		Version: fmt.Sprintf("%s (commit %s, built %s)", version, commit, date),
-		RunE:    runTUI,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !update {
+				return runTUI(cmd, args)
+			}
+			return updater.Update(version)
+		},
 	}
 	// -v is already taken by --verbose, so leave the version shorthand unset.
 	root.SetVersionTemplate("so-aws-lab {{.Version}}\n")
 	root.PersistentFlags().BoolP("verbose", "v", false, "stream terraform output instead of showing a spinner")
+	root.Flags().BoolVar(&update, "update", false, "install the latest release when no labs are deployed")
 
 	root.AddCommand(initCmd(), enableCmd(), disableCmd(), applyCmd(), destroyCmd(), statusCmd(), capstoneCmd())
 	if err := root.Execute(); err != nil {
